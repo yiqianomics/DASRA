@@ -1,0 +1,23 @@
+Package: dash
+Type: Package
+Title: Depth-Aware Structural-Zero and Hellinger Test for Microbiome Differential Abundance
+Version: 0.1.0
+Authors@R:
+    person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
+           role = c("aut", "cre"))
+Description: A two-part differential abundance test for microbiome count data.
+    DASH combines a structural-zero prevalence score test, derived from a
+    per-taxon zero-inflated Tobit model, with a weighted abundance test on
+    Hellinger-Riemann intrinsic coordinates (HRIC) that uses an HC3 sandwich standard
+    error and a robust affine bias correction. The two arms are combined per
+    taxon by a Bonferroni min-P rule and by a Cauchy rule.
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+Imports:
+    stats
+Suggests:
+    MASS,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Config/roxygen2/version: 8.0.0

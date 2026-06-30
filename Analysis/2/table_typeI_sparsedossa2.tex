@@ -1,0 +1,20 @@
+\begin{table}[t]
+\centering
+\caption{Per-taxon Type I error under the global null. Values are averaged over simulation replicates. Nominal level is 0.05; bold values exceed 0.06.}
+\label{tab:typeI_sparsedossa2}
+\begin{tabular}{lcccccc}
+\toprule
+ & \multicolumn{3}{c}{Unconfounded} & \multicolumn{3}{c}{Confounded} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+Method & $n=80$ & $n=160$ & $n=320$ & $n=80$ & $n=160$ & $n=320$ \\
+\midrule
+DASH (Bonf-minP) & 0.050 & 0.048 & 0.051 & 0.042 & 0.042 & 0.049 \\
+DASH (Cauchy) & 0.050 & 0.049 & 0.050 & 0.042 & 0.043 & 0.050 \\
+ZINQ & 0.038 & 0.041 & 0.042 & 0.037 & 0.040 & 0.046 \\
+ANCOM-BC2 & \textbf{0.376} & \textbf{0.467} & \textbf{0.541} & \textbf{0.425} & \textbf{0.517} & \textbf{0.594} \\
+DESeq2 & \textbf{0.095} & \textbf{0.087} & \textbf{0.081} & \textbf{0.091} & \textbf{0.083} & \textbf{0.086} \\
+edgeR & \textbf{0.284} & \textbf{0.315} & \textbf{0.352} & \textbf{0.268} & \textbf{0.303} & \textbf{0.336} \\
+metagenomeSeq & \textbf{0.475} & \textbf{0.542} & \textbf{0.566} & \textbf{0.471} & \textbf{0.520} & \textbf{0.552} \\
+\bottomrule
+\end{tabular}
+\end{table}
