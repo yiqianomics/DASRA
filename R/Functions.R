@@ -11,14 +11,15 @@
 ##  them into a single omnibus test:
 ##
 ##    * Prevalence arm. A structural-zero score test derived from a per-taxon
-##      zero-inflated Tobit model. Library size enters through a depth-aware
-##      censoring threshold, so an observed zero in a deep sample gives stronger
-##      evidence of true absence than a zero in a shallow sample.
+##      structural-zero mixture model with a left-censored normal observation
+##      component. Library size enters through a depth-aware censoring threshold,
+##      so an observed zero in a deep sample gives stronger evidence of true
+##      absence than a zero in a shallow sample.
 ##    * Abundance arm. A weighted least squares test on Hellinger-Riemann
-##      intrinsic coordinates (HRIC), with posterior-presence weights, an HC3
-##      sandwich standard error, and a robust affine (LTS) correction for the
-##      compositional background whose line-fit variance is propagated into the
-##      standard error.
+##      intrinsic coordinates (HRIC), with auxiliary posterior-presence weights,
+##      a censoring-correction nuisance covariate, an HC3 sandwich standard error,
+##      and a robust affine (LTS) correction for the compositional background
+##      whose line-fit variance is propagated into the standard error.
 ##
 ##  The two component p-values are combined by a Bonferroni min-P rule (primary)
 ##  and a Cauchy combination (sensitivity). Multiple testing across taxa is left
@@ -42,8 +43,9 @@
 ##    1. Internal utilities
 ##    2. P-value combination rules
 ##    3. HRIC transform
-##    4. Prevalence arm: zero-inflated Tobit and the structural-zero score test
-##    5. Abundance arm: HRIC weighted least squares with affine bias correction
+##    4. Prevalence arm: structural-zero mixture and the structural-zero score test
+##    5. Abundance arm: HRIC weighted least squares with auxiliary weights,
+##       censoring correction, and affine bias correction
 ##    6. DASH: the test
 ## =============================================================================
 
@@ -168,54 +170,136 @@ hric_transform <- function(X) {
 }
 
 ## -----------------------------------------------------------------------------
-## 4. Prevalence arm: zero-inflated Tobit
+## 4. Prevalence arm: structural-zero mixture
 ## -----------------------------------------------------------------------------
 
-#' Fit the per-taxon zero-inflated Tobit null model
+#' Fit the per-taxon structural-zero mixture model
 #' @keywords internal
 #' @noRd
-fit_tobit_null <- function(y, N, z = NULL, d0 = 1.0) {
-  y <- as.numeric(y); N <- as.numeric(N); pos <- y > 0
-  ell <- ifelse(pos, log(pmax(y, 1) / N), 0); cc <- log(d0 / N)
-  if (is.null(z)) {
-    X <- matrix(1, length(y), 1)
-    colnames(X) <- "Intercept"
-  } else {
-    X <- design_matrix(g = NULL, z = z, include_group = FALSE)
+fit_tobit_null <- function(y, N, z = NULL, d0 = 1.0,
+                           g = NULL,
+                           include_group_rho = FALSE,
+                           include_group_eta = FALSE) {
+  y <- as.numeric(y)
+  N <- as.numeric(N)
+  pos <- y > 0
+  
+  ell <- ifelse(pos, log(pmax(y, 1) / N), 0)
+  cc <- log(d0 / N)
+  
+  make_zero_design <- function(include_group) {
+    if (include_group && is.null(g)) {
+      stop("g must be supplied when include_group=TRUE.")
+    }
+    
+    if (include_group) {
+      design_matrix(g = g, z = z, include_group = TRUE)
+    } else if (!is.null(z)) {
+      design_matrix(g = NULL, z = z, include_group = FALSE)
+    } else {
+      X <- matrix(1, length(y), 1)
+      colnames(X) <- "Intercept"
+      X
+    }
   }
-  npar_x <- ncol(X)
-  p0 <- min(max(mean(!pos) * 0.5, 0.02), 0.9); init_eta <- if (any(pos)) mean(log(pmax(y[pos] / N[pos], 1e-8))) else -5
-  init <- c(c(qlogis(p0), rep(0, npar_x - 1)), c(init_eta, rep(0, npar_x - 1)), log(1.0))
-  lower <- c(rep(-10, npar_x), rep(-30, npar_x), log(0.1)); upper <- c(rep(10, npar_x), rep(5, npar_x), log(8.0))
+  
+  X_rho <- make_zero_design(include_group_rho)
+  X_eta <- make_zero_design(include_group_eta)
+  
+  npar_rho <- ncol(X_rho)
+  npar_eta <- ncol(X_eta)
+  
+  p0 <- min(max(mean(!pos) * 0.5, 0.02), 0.9)
+  init_eta <- if (any(pos)) {
+    mean(log(pmax(y[pos] / N[pos], 1e-8)))
+  } else {
+    -5
+  }
+  
+  init <- c(
+    c(qlogis(p0), rep(0, npar_rho - 1)),
+    c(init_eta, rep(0, npar_eta - 1)),
+    log(1.0)
+  )
+  
+  lower <- c(rep(-10, npar_rho), rep(-30, npar_eta), log(0.1))
+  upper <- c(rep(10, npar_rho), rep(5, npar_eta), log(8.0))
+  
   nll <- function(par) {
-    alpha <- par[seq_len(npar_x)]; eta_coef <- par[npar_x + seq_len(npar_x)]; sig <- exp(par[2 * npar_x + 1])
+    alpha <- par[seq_len(npar_rho)]
+    eta_coef <- par[npar_rho + seq_len(npar_eta)]
+    sig <- exp(par[npar_rho + npar_eta + 1])
+    
     if (!is.finite(sig) || sig <= 0) return(1e10)
-    rho <- clamp(plogis(as.numeric(X %*% alpha)), 1e-12, 1 - 1e-12); eta <- as.numeric(X %*% eta_coef)
-    a <- (cc - eta) / sig; Lz <- rho + (1 - rho) * pnorm(a); Lp <- (1 - rho) * dnorm((ell - eta) / sig) / sig; L <- ifelse(pos, Lp, Lz)
+    
+    rho <- clamp(plogis(as.numeric(X_rho %*% alpha)), 1e-12, 1 - 1e-12)
+    eta <- as.numeric(X_eta %*% eta_coef)
+    
+    a <- (cc - eta) / sig
+    Lz <- rho + (1 - rho) * pnorm(a)
+    Lp <- (1 - rho) * dnorm((ell - eta) / sig) / sig
+    L <- ifelse(pos, Lp, Lz)
+    
     -sum(log(pmax(L, 1e-300)))
   }
-  out <- tryCatch(optim(init, nll, method = "L-BFGS-B", lower = lower, upper = upper, control = list(maxit = 500, factr = 1e7)), error = function(e) NULL)
-  par <- if (!is.null(out) && is.finite(out$value)) out$par else tryCatch(optim(init, nll, method = "Nelder-Mead", control = list(maxit = 500, reltol = 1e-8))$par, error = function(e) init)
-  list(alpha = par[seq_len(npar_x)], eta_coef = par[npar_x + seq_len(npar_x)], sig = max(exp(par[2 * npar_x + 1]), 0.1), X = X)
+  
+  out <- tryCatch(
+    optim(
+      init,
+      nll,
+      method = "L-BFGS-B",
+      lower = lower,
+      upper = upper,
+      control = list(maxit = 500, factr = 1e7)
+    ),
+    error = function(e) NULL
+  )
+  
+  par <- if (!is.null(out) && is.finite(out$value)) {
+    out$par
+  } else {
+    tryCatch(
+      optim(
+        init,
+        nll,
+        method = "Nelder-Mead",
+        control = list(maxit = 500, reltol = 1e-8)
+      )$par,
+      error = function(e) init
+    )
+  }
+  
+  list(
+    alpha = par[seq_len(npar_rho)],
+    eta_coef = par[npar_rho + seq_len(npar_eta)],
+    sig = max(exp(par[npar_rho + npar_eta + 1]), 0.1),
+    X_rho = X_rho,
+    X_eta = X_eta
+  )
 }
 
-#' Prevalence score p-value and posterior structural-zero probabilities
+#' Prevalence score p-value and null-model posterior structural-zero probabilities
 #' @keywords internal
 #' @noRd
-## Per-taxon Tobit fit: returns the prevalence score p-value and the posterior
-## structural-zero probabilities gamma_ij (0 for positive counts). gamma is reused as
-## 1 - gamma for the abundance weights, so the Tobit is fit only once per taxon.
-
-
 tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
   y <- as.numeric(y)
   N <- as.numeric(N)
   
-  fit <- fit_tobit_null(y, N, z = z, d0 = d0)
-  X <- fit$X
+  ## Null zero-model fit for the structural-prevalence score.
+  ## The group is not included in either the structural-absence logit or
+  ## the present-taxon latent abundance mean.
+  fit <- fit_tobit_null(
+    y = y,
+    N = N,
+    z = z,
+    d0 = d0,
+    g = g,
+    include_group_rho = FALSE,
+    include_group_eta = FALSE
+  )
   
-  rho <- clamp(plogis(as.numeric(X %*% fit$alpha)), 1e-10, 1 - 1e-10)
-  eta <- as.numeric(X %*% fit$eta_coef)
+  rho <- clamp(plogis(as.numeric(fit$X_rho %*% fit$alpha)), 1e-10, 1 - 1e-10)
+  eta <- as.numeric(fit$X_eta %*% fit$eta_coef)
   sig <- fit$sig
   
   pos <- y > 0
@@ -227,8 +311,7 @@ tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
   gamma <- ifelse(pos, 0, rho / denom)
   
   ## Manuscript version:
-  ## residualize group only on measured covariates z.
-  ## Depth enters the prevalence model through the Tobit censoring threshold a_i.
+  ## depth enters through a_i = log(d0 / N_i), not by residualizing G on logN.
   gp <- residualize_group(g, z = z)
   
   u <- gp * (gamma - rho)
@@ -244,7 +327,60 @@ tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
   
   list(
     p = p,
-    gamma = gamma
+    gamma = gamma,
+    rho = rho
+  )
+}
+
+#' Auxiliary posterior structural-zero probabilities and censoring correction
+#' @keywords internal
+#' @noRd
+tobit_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
+  y <- as.numeric(y)
+  N <- as.numeric(N)
+  
+  ## Auxiliary zero-model fit for abundance weights.
+  ## The group is included in the structural-absence logit so that
+  ## group-specific structural prevalence is not forced into the abundance arm.
+  ## The present-taxon latent abundance mean is kept free of the group here;
+  ## the abundance group contrast is tested later in the HRIC regression.
+  fit <- fit_tobit_null(
+    y = y,
+    N = N,
+    z = z,
+    d0 = d0,
+    g = g,
+    include_group_rho = TRUE,
+    include_group_eta = FALSE
+  )
+  
+  rho <- clamp(plogis(as.numeric(fit$X_rho %*% fit$alpha)), 1e-10, 1 - 1e-10)
+  eta <- as.numeric(fit$X_eta %*% fit$eta_coef)
+  sig <- fit$sig
+  
+  pos <- y > 0
+  a <- log(d0 / N)
+  
+  tval <- (a - eta) / sig
+  Phi <- pnorm(tval)
+  denom <- pmax(rho + (1 - rho) * Phi, 1e-300)
+  
+  gamma <- ifelse(pos, 0, rho / denom)
+  
+  ## Inverse-Mills-type left-censoring covariate for observed zeros.
+  ## E[L | L <= a] = eta - sigma * phi(t) / Phi(t), t=(a-eta)/sigma.
+  ## We include sigma * phi(t) / Phi(t) as a nuisance covariate in the
+  ## abundance regression, with a free coefficient.
+  log_ratio <- dnorm(tval, log = TRUE) - pnorm(tval, log.p = TRUE)
+  ratio <- exp(log_ratio)
+  ratio[!is.finite(ratio)] <- 0
+  
+  censor_corr <- ifelse(pos, 0, sig * ratio)
+  censor_corr[!is.finite(censor_corr)] <- 0
+  
+  list(
+    gamma = gamma,
+    censor_corr = censor_corr
   )
 }
 
@@ -255,8 +391,11 @@ tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
 #' Robust affine (LTS) line fit of HRIC group coefficients on root abundance
 #' @keywords internal
 #' @noRd
-## Abundance test: weighted least squares on HRIC coordinates with posterior-presence
-## weights w_ij = 1 - gamma_ij (positives get weight 1, confident structural zeros ~0).
+## Abundance test: weighted least squares on HRIC coordinates with auxiliary
+## posterior-presence weights w_ij = 1 - gamma_ij^aux. Positive counts get weight 1,
+## while zeros likely to be structural after allowing group-specific prevalence
+## receive small weights. The abundance regression also includes a taxon-specific
+## left-censoring correction covariate when it is usable.
 ## Group effect uses an HC3 heteroscedasticity-robust sandwich SE, then an affine
 ## (intercept + slope) bias correction across taxa. W is an n x J matrix of weights.
 ##
@@ -348,9 +487,17 @@ hric_line_fit <- function(b, v0) {
 #' DASH abundance arm: weighted least squares on HRIC coordinates
 #' @keywords internal
 #' @noRd
-hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L) {
+hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
   Y <- as.matrix(Y)
   N <- rowSums(Y)
+  
+  if (!is.null(Ccor)) {
+    Ccor <- as.matrix(Ccor)
+    
+    if (!all(dim(Ccor) == dim(Y))) {
+      stop("Ccor must have the same dimensions as Y.")
+    }
+  }
   
   ## Manuscript version:
   ## HRIC is computed from the observed composition. Exact zeros remain boundary
@@ -368,10 +515,9 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L) {
     Z <- cbind(Z, logN = logN)
   }
   
-  X <- design_matrix(g = g, z = Z, include_group = TRUE)
+  X_base <- design_matrix(g = g, z = Z, include_group = TRUE)
   
   J <- ncol(M)
-  gidx <- match("Group", colnames(X))
   
   b <- rep(NA_real_, J)
   se <- rep(NA_real_, J)
@@ -388,6 +534,37 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L) {
     w <- W[, j]
     w[!is.finite(w) | w < 0] <- 0
     w <- pmin(w, 1)
+    
+    ## Add taxon-specific left-censoring correction as a nuisance covariate.
+    ## The correction is used only when it has non-negligible weighted variation
+    ## and does not create rank deficiency. Otherwise, fall back to the base
+    ## abundance regression rather than dropping the taxon.
+    X <- X_base
+    
+    if (!is.null(Ccor)) {
+      c_j <- as.numeric(Ccor[, j])
+      c_j[!is.finite(c_j)] <- 0
+      
+      use_w <- w > 1e-8
+      
+      if (sum(use_w) > ncol(X_base) + 2) {
+        c_bar <- stats::weighted.mean(c_j[use_w], w[use_w])
+        c_wsd <- sqrt(stats::weighted.mean((c_j[use_w] - c_bar)^2, w[use_w]))
+        
+        if (is.finite(c_wsd) && c_wsd > 1e-12) {
+          X_try <- cbind(X_base, censorCorr = c_j)
+          Xs_try <- X_try * sqrt(w)
+          XtWX_try <- crossprod(Xs_try)
+          
+          if (qr(XtWX_try)$rank == ncol(XtWX_try)) {
+            X <- X_try
+          }
+        }
+      }
+    }
+    
+    gidx <- match("Group", colnames(X))
+    if (!is.finite(gidx)) next
     
     if (sum(w > 1e-8) <= ncol(X) + 1) next
     
@@ -460,19 +637,21 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L) {
 #' Depth-Aware Structural-zero Hellinger (DASH) differential abundance test
 #'
 #' DASH is a two-part, per-taxon differential abundance test. The prevalence arm
-#' is a structural-zero score test from a per-taxon zero-inflated Tobit model.
-#' The abundance arm is a weighted least squares test on Hellinger-Riemann
-#' intrinsic coordinates (HRIC) with an HC3 sandwich standard error and a robust
-#' affine bias correction. The two arms are combined per taxon by a Bonferroni
-#' min-P rule (primary) and by a Cauchy combination (sensitivity). Multiple
-#' testing across taxa is the caller's responsibility; apply
-#' [stats::p.adjust()] with method `"BH"` to whichever column you report, as in
-#' the simulation study.
+#' is a structural-zero score test from a per-taxon structural-zero mixture model
+#' with a left-censored normal observation component. The abundance arm is a
+#' weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
+#' with auxiliary posterior-presence weights, a censoring-correction nuisance
+#' covariate, an HC3 sandwich standard error, and a robust affine bias correction.
+#' The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
+#' a Cauchy combination (sensitivity). Multiple testing across taxa is the
+#' caller's responsibility; apply [stats::p.adjust()] with method `"BH"` to
+#' whichever column you report, as in the simulation study.
 #'
 #' The function applies the simulation preprocessing (retain taxa with at least
 #' `min_positive` positive counts, drop empty samples) and then runs the test.
-#' With `min_positive = 3`, `d0 = 1`, and `m_abund = 5` the per-taxon p-values
-#' reproduce the simulation results exactly.
+#' With `min_positive = 3`, `d0 = 1`, and `m_abund = 5`, and with the same
+#' retained count table, group coding, covariates, and optional MASS availability,
+#' the per-taxon p-values reproduce the revised simulation implementation.
 #'
 #' @param counts Integer count matrix or data frame, samples (rows) by taxa
 #'   (columns). Column names are used as taxon identifiers; if absent they are
@@ -482,7 +661,7 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L) {
 #'   levels, so the second level is treated as the comparison ("case") group.
 #' @param covariates Optional measured covariates (vector, matrix, or data
 #'   frame), one row per sample, supplied to both arms for adjustment.
-#' @param d0 Detection constant for the Tobit censoring threshold. Default 1.
+#' @param d0 Detection constant for the sample-specific censoring threshold. Default 1.
 #' @param m_abund Abundance-eligibility threshold: the abundance arm is formed
 #'   for a taxon only if it has at least `m_abund` positive counts in each
 #'   group. Default 5.
@@ -576,8 +755,7 @@ dash <- function(counts, group, covariates = NULL,
   N <- rowSums(Y)
   taxa_names <- colnames(Y)
   
-  ## Fit Tobit once per taxon:
-  ## prevalence p-value + posterior structural-zero gamma.
+  ## Null zero-model fit for the structural-prevalence score.
   prev_list <- lapply(seq_len(J), function(j) {
     tobit_prev_and_gamma(
       y = as.numeric(Y[, j]),
@@ -591,16 +769,34 @@ dash <- function(counts, group, covariates = NULL,
   p_pr <- vapply(prev_list, function(o) o$p, numeric(1))
   names(p_pr) <- taxa_names
   
-  Gamma <- vapply(prev_list, function(o) o$gamma, numeric(nrow(Y)))
+  ## Auxiliary zero-model fit for abundance weights and censoring correction.
+  ## This fit allows the structural-absence probability to differ by group.
+  aux_list <- lapply(seq_len(J), function(j) {
+    tobit_aux_gamma_censor(
+      y = as.numeric(Y[, j]),
+      N = N,
+      g = g,
+      z = z,
+      d0 = d0
+    )
+  })
   
-  colnames(Gamma) <- taxa_names
-  rownames(Gamma) <- rownames(Y)
+  Gamma_aux <- vapply(aux_list, function(o) o$gamma, numeric(nrow(Y)))
+  Ccor <- vapply(aux_list, function(o) o$censor_corr, numeric(nrow(Y)))
   
-  ## Presence weights for abundance regression.
-  W <- 1 - Gamma
+  colnames(Gamma_aux) <- taxa_names
+  rownames(Gamma_aux) <- rownames(Y)
+  
+  colnames(Ccor) <- taxa_names
+  rownames(Ccor) <- rownames(Y)
+  
+  ## Presence weights for abundance regression use the auxiliary posterior
+  ## structural-zero probabilities, not the null-model probabilities.
+  W <- 1 - Gamma_aux
   
   ## Abundance component:
-  ## observed HRIC + log-depth nuisance + abundance eligibility + HC3/t with
+  ## observed HRIC + log-depth nuisance + auxiliary presence weights +
+  ## censoring-correction covariate + abundance eligibility + HC3/t with
   ## line-fit variance. Returns the p-values and a logical flag marking the taxa
   ## for which the abundance component was actually formed (eligible + fitted).
   ab <- hric_wls_p(
@@ -608,7 +804,8 @@ dash <- function(counts, group, covariates = NULL,
     g = g,
     W = W,
     z = z,
-    m_abund = m_abund
+    m_abund = m_abund,
+    Ccor = Ccor
   )
   p_ab <- ab$p
   tested_ab <- ab$tested
@@ -633,11 +830,12 @@ dash <- function(counts, group, covariates = NULL,
   
   ## --- Tidy output ---------------------------------------------------------
   out <- data.frame(
-    taxon        = taxa_names,
-    p_prevalence = unname(p_pr),
-    p_abundance  = unname(p_ab),
-    p_bonf_minp  = unname(p_bonf),
-    p_cauchy     = unname(p_cauchy),
+    taxon             = taxa_names,
+    p_prevalence      = unname(p_pr),
+    p_abundance       = unname(p_ab),
+    abundance_formed  = unname(tested_ab),
+    p_bonf_minp       = unname(p_bonf),
+    p_cauchy          = unname(p_cauchy),
     stringsAsFactors = FALSE
   )
   rownames(out) <- NULL

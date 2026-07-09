@@ -18,7 +18,7 @@ levels, so the second level is treated as the comparison ("case") group.}
 \item{covariates}{Optional measured covariates (vector, matrix, or data
 frame), one row per sample, supplied to both arms for adjustment.}
 
-\item{d0}{Detection constant for the Tobit censoring threshold. Default 1.}
+\item{d0}{Detection constant for the sample-specific censoring threshold. Default 1.}
 
 \item{m_abund}{Abundance-eligibility threshold: the abundance arm is formed
 for a taxon only if it has at least \code{m_abund} positive counts in each
@@ -44,20 +44,22 @@ The retained sample and taxon indices are attached as the attributes
 }
 \description{
 DASH is a two-part, per-taxon differential abundance test. The prevalence arm
-is a structural-zero score test from a per-taxon zero-inflated Tobit model.
-The abundance arm is a weighted least squares test on Hellinger-Riemann
-intrinsic coordinates (HRIC) with an HC3 sandwich standard error and a robust
-affine bias correction. The two arms are combined per taxon by a Bonferroni
-min-P rule (primary) and by a Cauchy combination (sensitivity). Multiple
-testing across taxa is the caller's responsibility; apply
-\code{\link[stats:p.adjust]{stats::p.adjust()}} with method \code{"BH"} to whichever column you report, as in
-the simulation study.
+is a structural-zero score test from a per-taxon structural-zero mixture model
+with a left-censored normal observation component. The abundance arm is a
+weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
+with auxiliary posterior-presence weights, a censoring-correction nuisance
+covariate, an HC3 sandwich standard error, and a robust affine bias correction.
+The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
+a Cauchy combination (sensitivity). Multiple testing across taxa is the
+caller's responsibility; apply \code{\link[stats:p.adjust]{stats::p.adjust()}} with method \code{"BH"} to
+whichever column you report, as in the simulation study.
 }
 \details{
 The function applies the simulation preprocessing (retain taxa with at least
 \code{min_positive} positive counts, drop empty samples) and then runs the test.
-With \code{min_positive = 3}, \code{d0 = 1}, and \code{m_abund = 5} the per-taxon p-values
-reproduce the simulation results exactly.
+With \code{min_positive = 3}, \code{d0 = 1}, and \code{m_abund = 5}, and with the same
+retained count table, group coding, covariates, and optional MASS availability,
+the per-taxon p-values reproduce the revised simulation implementation.
 }
 \examples{
 \dontrun{
