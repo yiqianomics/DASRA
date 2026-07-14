@@ -4,15 +4,7 @@
 \alias{dash}
 \title{Depth-Aware Structural-zero Hellinger (DASH) differential abundance test}
 \usage{
-dash(
-  counts,
-  group,
-  covariates = NULL,
-  d0 = 1,
-  m_abund = 5L,
-  min_positive = 3L,
-  zero_method = c("optim", "em")
-)
+dash(counts, group, covariates = NULL, d0 = 1, m_abund = 5L, min_positive = 3L)
 }
 \arguments{
 \item{counts}{Integer count matrix or data frame, samples (rows) by taxa
@@ -37,22 +29,13 @@ counts across all samples, matching the simulation. Set to 0 to disable
 retention and test the supplied taxa as given. Default 3. Samples with no
 positive counts are always dropped, since the HRIC transform requires a
 positive total in every sample.}
-
-\item{zero_method}{Numerical method used to estimate each per-taxon
-structural-zero mixture model. \code{"optim"} directly maximizes the
-observed-data likelihood using the original bounded L-BFGS-B procedure
-with a Nelder-Mead fallback and is the default. \code{"em"} uses the
-expectation-maximization algorithm. Both methods target the same
-observed-data likelihood.}
 }
 \value{
 A data frame with one row per retained taxon and columns:
 \describe{
 \item{taxon}{taxon identifier}
 \item{p_prevalence}{prevalence-arm p-value}
-\item{prevalence_formed}{whether the prevalence arm was successfully formed}
 \item{p_abundance}{abundance-arm p-value (1 when the arm is not formed)}
-\item{abundance_formed}{whether the abundance arm was successfully formed}
 \item{p_bonf_minp}{DASH (Bonf-minP) omnibus p-value}
 \item{p_cauchy}{DASH (Cauchy) omnibus p-value}
 }
@@ -62,9 +45,7 @@ The retained sample and taxon indices are attached as the attributes
 \description{
 DASH is a two-part, per-taxon differential abundance test. The prevalence arm
 is a structural-zero score test from a per-taxon structural-zero mixture model
-with a left-censored normal observation component. The zero model may be
-estimated either by direct maximization of the observed-data likelihood or
-by EM, with direct optimization used by default. The abundance arm is a
+with a left-censored normal observation component. The abundance arm is a
 weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
 with auxiliary posterior-presence weights, a censoring-correction nuisance
 covariate, a robust affine bias correction, and a joint sample-level HC3
@@ -77,9 +58,9 @@ whichever column you report, as in the simulation study.
 \details{
 The function applies the simulation preprocessing (retain taxa with at least
 \code{min_positive} positive counts, drop empty samples) and then runs the test.
-The default analysis uses \code{min_positive = 3}, \code{d0 = 1}, and
-\code{m_abund = 5}. Results also depend on the retained count table, group
-coding and covariates. MASS is required for the initial LTS fit.
+With \code{min_positive = 3}, \code{d0 = 1}, and \code{m_abund = 5}, and with the same
+retained count table, group coding, covariates, and optional MASS availability,
+the per-taxon p-values reproduce the revised simulation implementation.
 }
 \examples{
 \dontrun{
