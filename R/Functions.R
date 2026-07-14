@@ -17,27 +17,27 @@
 ##      absence than a zero in a shallow sample.
 ##    * Abundance arm. A weighted least squares test on Hellinger-Riemann
 ##      intrinsic coordinates (HRIC), with auxiliary posterior-presence weights,
-##      a censoring-correction nuisance covariate, a robust affine (LTS)
-##      correction for the compositional background, and a joint sample-level
-##      HC3 standard error for the affine-corrected coefficient.
+##      a censoring-correction nuisance covariate, robust LTS selection followed
+##      by a final OLS affine refit, a joint sample-level HC3 variance for the
+##      affine-corrected coefficient, and asymptotic-normal inference.
 ##
 ##  The two component p-values are combined by a Bonferroni min-P rule (primary)
 ##  and a Cauchy combination (sensitivity). Multiple testing across taxa is left
 ##  to the caller; apply Benjamini-Hochberg, stats::p.adjust(., "BH"), to the
 ##  reported column.
 ##
-##  The numerics are identical to the implementation used in the simulation
-##  studies. The defaults d0 = 1, m_abund = 5, and min_positive = 3 reproduce
-##  the simulation results exactly.
+##  This implementation uses the complete revised abundance inference:
+##  final OLS affine refit on the LTS-selected inlier set, joint sample-level
+##  HC3 variance, and asymptotic-normal inference. The defaults are d0 = 1,
+##  m_abund = 5, and min_positive = 3.
 ##
 ##  Entry points
 ##    dash()           the test: input coercion, feature retention, both arms,
 ##                     and the per-taxon combination, returned as a tidy table
 ##    hric_transform() the HRIC transform, usable on its own
 ##
-##  Dependencies: base R and 'stats'. 'MASS' is optional: when available the
-##  affine correction uses MASS::lqs (least trimmed squares); otherwise a
-##  base-R Theil-Sen fit is used.
+##  Dependencies: base R, 'stats', and 'MASS'. The affine correction uses
+##  MASS::lqs for least trimmed squares inlier selection.
 ##
 ##  Contents
 ##    1. Internal utilities
@@ -49,7 +49,7 @@
 ##    6. DASH: the test
 ## =============================================================================
 
-#' @importFrom stats optim qlogis plogis pnorm dnorm pchisq pt sd mad median qnorm coef p.adjust
+#' @importFrom stats optim qlogis plogis pnorm dnorm pchisq sd mad median qnorm coef p.adjust
 NULL
 
 
@@ -396,133 +396,168 @@ tobit_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
 ## while zeros likely to be structural after allowing group-specific prevalence
 ## receive small weights. The abundance regression also includes a taxon-specific
 ## left-censoring correction covariate when it is usable.
-## Group effect uses an HC3 heteroscedasticity-robust sandwich SE, then an affine
-## (intercept + slope) bias correction across taxa. W is an n x J matrix of weights.
+## Group effects are corrected by a robust affine fit across taxa, and the final
+## uncertainty is computed by a joint sample-level HC3 variance. W is an n x J
+## matrix of posterior-presence weights.
 ##
-## Robust LTS line fit of the HRIC group coefficients b_j on baseline root abundance
-## v0_j. Returns the bias-corrected residual b_j - (chat + lhat v0_j) together with
-## the 2x2 covariance Sigma of the line estimate (chat, lhat), computed on the LTS
-## inliers H as Sigma = sigma2H * (sum_{k in H} g_k g_k^T)^{-1} with g_k = (1, v0_k)
-## and sigma2H = sum_{k in H} r_k^2 / (|H| - 2). This lets the abundance arm add the
-## line-fit variance g_j^T Sigma g_j to the HC3 variance of beta-hat when forming the
-## standard error of beta-tilde. Uses MASS::lqs when available; falls back to a
-## Theil-Sen fit (base R), and to an intercept-only median if the regressor has no
-## usable spread. The line is fit on abundance-eligible taxa only (b is NA otherwise);
-## differential taxa act as sparse high-residual outliers.
+## Robust affine correction of the raw HRIC group coefficients b_j using
+## baseline root abundance v0_j.
+##
+## An initial LTS fit is used to identify the affine-inlier set H. After H is
+## selected, the final
+## affine intercept and slope are obtained by ordinary least squares on H:
+##
+##   a_hat = (G_H^T G_H)^{-1} G_H^T beta_hat_H = B_H beta_hat_H.
+##
+## The same final refit is used for both the corrected coefficient
+##
+##   beta_tilde_j = beta_hat_j - g_j^T a_hat
+##
+## and the joint sample-level HC3 variance. The function therefore returns
+## the corrected coefficients, the inlier indices H, and the matrix B_H.
 hric_line_fit <- function(b, v0) {
   J <- length(b)
   bc <- rep(NA_real_, J)
-  Sigma <- matrix(0, 2, 2)
-  ok <- is.finite(b) & is.finite(v0)
-  ok_idx <- which(ok)
   
-  ## Intercept-only fallback (too few taxa, or no spread in v0).
-  ## The point estimator and the original line-fit variance are left unchanged.
-  ## A joint sample-level affine variance is not formed for this non-smooth
-  ## median fallback.
-  if (sum(ok) < 5 || stats::sd(v0[ok]) < 1e-10) {
-    bb <- b[ok]
-    med <- median(bb, na.rm = TRUE)
-    if (is.finite(med)) {
-      bc[ok] <- bb - med
-      r <- bb - med
-      scl <- stats::mad(r)
-      if (!is.finite(scl) || scl <= 0) scl <- stats::sd(r)
-      if (!is.finite(scl) || scl <= 0) scl <- 1
-      H <- abs(r) <= 2.5 * scl
-      if (sum(H) < 3) H <- rep(TRUE, length(r))
-      s2 <- sum(r[H]^2) / max(sum(H) - 1, 1)
-      Sigma[1, 1] <- s2 / sum(H)   # variance of the common location only
-    }
-    return(list(
-      bc = bc,
-      Sigma = Sigma,
-      H = integer(0),
-      BH = NULL,
-      joint_available = FALSE
-    ))
-  }
-  
-  x <- v0[ok]; y <- b[ok]
-  
-  fit <- NULL
-  if (requireNamespace("MASS", quietly = TRUE)) {
-    fit <- tryCatch(MASS::lqs(y ~ x, method = "lts"), error = function(e) NULL)
-  }
-  
-  if (!is.null(fit)) {
-    co <- stats::coef(fit)
-    chat <- co[1]; lhat <- co[2]
-  } else {
-    ## Theil-Sen fallback (no dependency).
-    dx <- outer(x, x, "-"); dy <- outer(y, y, "-"); ut <- upper.tri(dx)
-    sx <- dx[ut]; good <- abs(sx) > 1e-12
-    if (!any(good)) {
-      med <- median(y)
-      bc[ok] <- y - med
-      r <- y - med
-      s2 <- sum(r^2) / max(length(r) - 1, 1)
-      Sigma[1, 1] <- s2 / length(r)
-      return(list(
-        bc = bc,
-        Sigma = Sigma,
-        H = integer(0),
-        BH = NULL,
-        joint_available = FALSE
-      ))
-    }
-    lhat <- median(dy[ut][good] / sx[good])
-    chat <- median(y - lhat * x)
-  }
-  
-  ## Keep the original affine-corrected point estimate exactly unchanged.
-  r_all <- y - (chat + lhat * x)
-  bc[ok] <- r_all
-  
-  ## LTS reweighting: inliers within 2.5 robust scale units.
-  scl <- stats::mad(r_all)
-  if (!is.finite(scl) || scl <= 0) scl <- stats::sd(r_all)
-  if (!is.finite(scl) || scl <= 0) scl <- 1
-  H <- abs(r_all) <= 2.5 * scl
-  if (sum(H) < 4) H <- rep(TRUE, length(r_all))
-  
-  ## Preserve the original line-fit variance for a conservative fallback.
-  gH <- cbind(1, x[H])
-  sigma2H <- sum(r_all[H]^2) / max(sum(H) - 2, 1)
-  Sgg <- crossprod(gH)
-  Sigma <- tryCatch(
-    sigma2H * solve(Sgg),
-    error = function(e) {
-      d <- diag(Sgg); d[d <= 0] <- 1
-      sigma2H * diag(1 / d, 2)
-    }
+  ok_idx <- which(
+    is.finite(b) &
+      is.finite(v0)
   )
   
-  ## Additional objects used only by the new abundance SE calculation.
-  ## Conditional on the selected inlier set H, BH maps the vector of raw
-  ## coefficients on H to the affine intercept and slope in the first-order
-  ## sample-level variance propagation.
-  H_idx <- ok_idx[H]
-  GH <- cbind(Intercept = 1, v0 = v0[H_idx])
-  BH <- NULL
-  joint_available <- FALSE
-  
-  if (nrow(GH) >= 3 && qr(GH)$rank == 2) {
-    BH <- tryCatch(
-      solve(crossprod(GH), t(GH)),
-      error = function(e) NULL
+  invalid_result <- function() {
+    list(
+      valid = FALSE,
+      bc = bc,
+      H = integer(0),
+      GH = NULL,
+      BH = NULL,
+      coef = c(NA_real_, NA_real_)
     )
-    joint_available <-
-      !is.null(BH) &&
-      all(is.finite(BH))
   }
   
+  ## The joint affine variance requires a nonsingular
+  ## intercept-plus-slope refit.
+  if (
+    length(ok_idx) < 5L ||
+    stats::sd(v0[ok_idx]) < 1e-10
+  ) {
+    return(invalid_result())
+  }
+  
+  x <- v0[ok_idx]
+  y <- b[ok_idx]
+  
+  initial_fit <- NULL
+  
+  if (!requireNamespace("MASS", quietly = TRUE)) {
+    stop(
+      "Package 'MASS' is required for the LTS affine correction."
+    )
+  }
+  
+  initial_fit <- tryCatch(
+    MASS::lqs(
+      y ~ x,
+      method = "lts"
+    ),
+    error = function(e) NULL
+  )
+  
+  if (is.null(initial_fit)) {
+    return(invalid_result())
+  }
+  
+  initial_coef <- stats::coef(initial_fit)
+  
+  chat_init <- unname(initial_coef[1])
+  lhat_init <- unname(initial_coef[2])
+  
+  if (!all(is.finite(c(chat_init, lhat_init)))) {
+    return(invalid_result())
+  }
+  
+  initial_residual <- y - (
+    chat_init +
+      lhat_init * x
+  )
+  
+  ## Robust reweighting used to identify the affine-inlier set H.
+  robust_scale <- stats::mad(initial_residual)
+  
+  if (
+    !is.finite(robust_scale) ||
+    robust_scale <= 0
+  ) {
+    robust_scale <- stats::sd(initial_residual)
+  }
+  
+  if (
+    !is.finite(robust_scale) ||
+    robust_scale <= 0
+  ) {
+    robust_scale <- 1
+  }
+  
+  H_local <-
+    abs(initial_residual) <=
+    2.5 * robust_scale
+  
+  if (sum(H_local) < 4L) {
+    return(invalid_result())
+  }
+  
+  H_idx <- ok_idx[H_local]
+  
+  GH <- cbind(
+    Intercept = 1,
+    v0 = v0[H_idx]
+  )
+  
+  if (
+    nrow(GH) < 3L ||
+    qr(GH)$rank < 2L
+  ) {
+    return(invalid_result())
+  }
+  
+  Sgg <- crossprod(GH)
+  
+  Sgg_inv <- tryCatch(
+    solve(Sgg),
+    error = function(e) NULL
+  )
+  
+  if (
+    is.null(Sgg_inv) ||
+    any(!is.finite(Sgg_inv))
+  ) {
+    return(invalid_result())
+  }
+  
+  ## Final OLS refit on H. The same BH must be used for both
+  ## the corrected point estimate and the joint variance.
+  BH <- Sgg_inv %*% t(GH)
+  
+  coef_final <- as.numeric(
+    BH %*% b[H_idx]
+  )
+  
+  G_ok <- cbind(
+    1,
+    v0[ok_idx]
+  )
+  
+  bc[ok_idx] <-
+    b[ok_idx] -
+    as.numeric(G_ok %*% coef_final)
+  
   list(
+    valid = TRUE,
     bc = bc,
-    Sigma = Sigma,
-    H = if (joint_available) H_idx else integer(0),
-    BH = if (joint_available) BH else NULL,
-    joint_available = joint_available
+    H = H_idx,
+    GH = GH,
+    BH = BH,
+    coef = coef_final
   )
 }
 
@@ -548,32 +583,53 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
   
   ## Add log library size as a technical nuisance in the abundance arm.
   Z <- make_cov_matrix(z)
-  logN <- safe_scale(log(pmax(N, 1)))
   
-  if (is.null(Z)) {
-    Z <- matrix(logN, ncol = 1)
-    colnames(Z) <- "logN"
-  } else {
-    Z <- cbind(Z, logN = logN)
+  raw_logN <- log(pmax(N, 1))
+  sd_logN <- stats::sd(raw_logN)
+  
+  ## Include log library size only when it has non-negligible variation.
+  if (
+    is.finite(sd_logN) &&
+    sd_logN > 1e-12
+  ) {
+    logN <- as.numeric(
+      (raw_logN - mean(raw_logN)) /
+        sd_logN
+    )
+    
+    if (is.null(Z)) {
+      Z <- matrix(
+        logN,
+        ncol = 1,
+        dimnames = list(NULL, "logN")
+      )
+    } else {
+      Z <- cbind(
+        Z,
+        logN = logN
+      )
+    }
   }
   
-  X_base <- design_matrix(g = g, z = Z, include_group = TRUE)
+  X_base <- design_matrix(
+    g = g,
+    z = Z,
+    include_group = TRUE
+  )
   
   n <- nrow(M)
   J <- ncol(M)
   
   b <- rep(NA_real_, J)
-  se <- rep(NA_real_, J)
-  df <- rep(NA_real_, J)
   
-  ## The only added taxonwise object is the matrix of sample-level HC3
-  ## contributions for the raw group coefficients. Its jth column satisfies
-  ## sum_i Phi_raw[i,j]^2 = HC3 variance of beta-hat_j.
   Phi_raw <- matrix(
     NA_real_,
     nrow = n,
     ncol = J,
-    dimnames = list(rownames(Y), colnames(Y))
+    dimnames = list(
+      rownames(Y),
+      colnames(Y)
+    )
   )
   
   for (j in seq_len(J)) {
@@ -637,94 +693,151 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
     bhat <- as.numeric(XtWXinv %*% crossprod(Xs, ys))
     e <- as.numeric(M[, j] - X %*% bhat)
     
-    ## HC3 leverage-adjusted sandwich. This part is retained exactly.
-    h <- rowSums((Xs %*% XtWXinv) * Xs)
-    h <- pmin(pmax(h, 0), 0.99)
-    
-    meat <- crossprod(X, (w^2 * e^2 / (1 - h)^2) * X)
-    V <- XtWXinv %*% meat %*% XtWXinv
-    
-    vv <- V[gidx, gidx]
-    if (!is.finite(vv) || vv <= 0) next
-    
-    ## Sample-level HC3 contribution for the raw group coefficient.
-    group_loading <- as.numeric(
-      X %*% XtWXinv[, gidx, drop = FALSE]
+    ## Weighted HC3 leverage.
+    h <- rowSums(
+      (Xs %*% XtWXinv) * Xs
     )
-    phi_j <- group_loading * w * e / (1 - h)
+    
+    h <- pmin(
+      pmax(h, 0),
+      1 - 1e-8
+    )
+    
+    ## Sample-level HC3 contribution to the raw group coefficient:
+    ##
+    ## phi_ij =
+    ## e_G^T A_j^{-1} x_ij
+    ## times
+    ## w_ij e_ij / (1 - h_ij).
+    group_loading <- as.numeric(
+      X %*%
+        XtWXinv[, gidx, drop = FALSE]
+    )
+    
+    phi_j <-
+      group_loading *
+      w *
+      e /
+      (1 - h)
+    
+    vv_raw <- sum(phi_j^2)
+    
+    if (
+      !is.finite(vv_raw) ||
+      vv_raw <= 0 ||
+      any(!is.finite(phi_j))
+    ) {
+      next
+    }
     
     b[j] <- bhat[gidx]
-    se[j] <- sqrt(vv)
-    df[j] <- max(sum(w > 1e-8) - rnk, 1)
-    
-    if (all(is.finite(phi_j))) {
-      Phi_raw[, j] <- phi_j
-    }
+    Phi_raw[, j] <- phi_j
   }
   
   ## Baseline root abundance for the affine HRIC correction.
   P0 <- sweep(Y[g == 0, , drop = FALSE], 1, pmax(N[g == 0], 1), "/")
   v0 <- sqrt(pmax(colMeans(P0), 0))
   
-  ## Keep the original affine-corrected point estimate unchanged.
-  lf <- hric_line_fit(b, v0)
-  bc <- lf$bc
+  ## Robust inlier selection followed by the final OLS affine refit.
+  lf <- hric_line_fit(
+    b = b,
+    v0 = v0
+  )
   
-  ## Original SE retained as a fallback for degenerate affine fits.
-  G2 <- cbind(1, v0)
-  var_line <- rowSums((G2 %*% lf$Sigma) * G2)
-  var_line[!is.finite(var_line) | var_line < 0] <- 0
-  se_tilde <- sqrt(se^2 + var_line)
+  p <- rep(1, J)
+  tested <- rep(FALSE, J)
+  se_joint <- rep(NA_real_, J)
+  z_stat <- rep(NA_real_, J)
   
-  ## Replace the abundance SE, whenever the fixed-inlier linearization is
-  ## available, by the joint sample-level HC3 variance:
-  ##
-  ##   phi_corr_ij = phi_ij - g_j^T B_H phi_iH,
-  ##   Var(beta_tilde_j) = sum_i phi_corr_ij^2.
-  ##
-  ## All point estimates, degrees of freedom, t reference, eligibility rules,
-  ## and downstream combination rules are otherwise unchanged.
-  if (isTRUE(lf$joint_available) && length(lf$H) > 0L) {
-    phi_H <- Phi_raw[, lf$H, drop = FALSE]
+  if (isTRUE(lf$valid)) {
+    ## n x |H| matrix:
+    ## row i contains sample i's HC3 contributions
+    ## to all raw coefficients used in the affine refit.
+    phi_H <- Phi_raw[
+      ,
+      lf$H,
+      drop = FALSE
+    ]
     
     if (all(is.finite(phi_H))) {
-      candidates <- which(
+      candidate <- which(
         is.finite(b) &
-          is.finite(bc) &
+          is.finite(lf$bc) &
           is.finite(v0)
       )
       
-      for (j in candidates) {
-        phi_j <- Phi_raw[, j]
-        if (any(!is.finite(phi_j))) next
-        
-        g_j <- c(1, v0[j])
-        affine_loading_j <- as.numeric(t(g_j) %*% lf$BH)
-        phi_background_j <- as.numeric(phi_H %*% affine_loading_j)
-        phi_corr_j <- phi_j - phi_background_j
-        var_joint_j <- sum(phi_corr_j^2)
-        
-        if (is.finite(var_joint_j) && var_joint_j > 0) {
-          se_tilde[j] <- sqrt(var_joint_j)
+      for (j in candidate) {
+        if (any(!is.finite(Phi_raw[, j]))) {
+          next
         }
+        
+        g_j <- c(
+          1,
+          v0[j]
+        )
+        
+        ## g_j^T B_H: loading of each affine-inlier
+        ## raw coefficient on taxon j's fitted background.
+        affine_loading_j <- as.numeric(
+          t(g_j) %*% lf$BH
+        )
+        
+        ## Sample-level contribution to the fitted affine
+        ## background evaluated at v0_j.
+        phi_background_j <- as.numeric(
+          phi_H %*% affine_loading_j
+        )
+        
+        ## Sample-level contribution to the corrected coefficient:
+        ## phi_corr_ij = phi_ij - g_j^T B_H phi_iH.
+        phi_corr_j <-
+          Phi_raw[, j] -
+          phi_background_j
+        
+        var_joint_j <- sum(
+          phi_corr_j^2
+        )
+        
+        if (
+          !is.finite(var_joint_j) ||
+          var_joint_j <= 0
+        ) {
+          next
+        }
+        
+        se_joint[j] <- sqrt(var_joint_j)
+        
+        z_stat[j] <-
+          lf$bc[j] /
+          se_joint[j]
+        
+        p[j] <-
+          2 * pnorm(
+            -abs(z_stat[j])
+          )
+        
+        tested[j] <- is.finite(p[j])
       }
     }
   }
   
-  p <- rep(1, J)
+  bad_p <- !is.finite(p)
+  p[bad_p] <- 1
+  tested[bad_p] <- FALSE
   
-  ## Taxa for which the abundance component was actually formed (eligible + fitted).
-  tested <- is.finite(b) & is.finite(se) & se > 0 & is.finite(df) & is.finite(bc)
-  
-  ## Keep the original finite-sample t calibration unchanged.
-  p[tested] <- 2 * pt(abs(bc[tested] / se_tilde[tested]),
-                      df = df[tested], lower.tail = FALSE)
-  
-  p[!is.finite(p)] <- 1
   names(p) <- colnames(Y)
   names(tested) <- colnames(Y)
+  names(se_joint) <- colnames(Y)
+  names(z_stat) <- colnames(Y)
   
-  list(p = p, tested = tested)
+  list(
+    p = p,
+    tested = tested,
+    beta_raw = b,
+    beta_corrected = lf$bc,
+    se_joint = se_joint,
+    z = z_stat
+  )
 }
 
 ## -----------------------------------------------------------------------------
@@ -738,8 +851,9 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #' with a left-censored normal observation component. The abundance arm is a
 #' weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
 #' with auxiliary posterior-presence weights, a censoring-correction nuisance
-#' covariate, a robust affine bias correction, and a joint sample-level HC3
-#' standard error for the affine-corrected coefficient.
+#' covariate, robust LTS selection followed by a final OLS affine refit, and a
+#' joint sample-level HC3 variance for the affine-corrected coefficient, with
+#' asymptotic-normal inference.
 #' The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
 #' a Cauchy combination (sensitivity). Multiple testing across taxa is the
 #' caller's responsibility; apply [stats::p.adjust()] with method `"BH"` to
@@ -894,8 +1008,9 @@ dash <- function(counts, group, covariates = NULL,
   
   ## Abundance component:
   ## observed HRIC + log-depth nuisance + auxiliary presence weights +
-  ## censoring-correction covariate + abundance eligibility + joint HC3/t
-  ## inference. Returns the p-values and a logical flag marking the taxa
+  ## censoring-correction covariate + abundance eligibility + final OLS
+  ## affine refit + joint HC3/Z inference. Returns the p-values and a logical
+  ## flag marking the taxa
   ## for which the abundance component was actually formed (eligible + fitted).
   ab <- hric_wls_p(
     Y = Y,

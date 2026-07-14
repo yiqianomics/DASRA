@@ -48,8 +48,9 @@ is a structural-zero score test from a per-taxon structural-zero mixture model
 with a left-censored normal observation component. The abundance arm is a
 weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
 with auxiliary posterior-presence weights, a censoring-correction nuisance
-covariate, a robust affine bias correction, and a joint sample-level HC3
-standard error for the affine-corrected coefficient.
+covariate, robust LTS selection followed by a final OLS affine refit, and a
+joint sample-level HC3 variance for the affine-corrected coefficient, with
+asymptotic-normal inference.
 The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
 a Cauchy combination (sensitivity). Multiple testing across taxa is the
 caller's responsibility; apply \code{\link[stats:p.adjust]{stats::p.adjust()}} with method \code{"BH"} to
