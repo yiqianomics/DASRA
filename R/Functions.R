@@ -17,27 +17,26 @@
 ##      absence than a zero in a shallow sample.
 ##    * Abundance arm. A weighted least squares test on Hellinger-Riemann
 ##      intrinsic coordinates (HRIC), with auxiliary posterior-presence weights,
-##      a censoring-correction nuisance covariate, an HC3 sandwich standard error,
-##      and a robust affine (LTS) correction for the compositional background
-##      whose line-fit variance is propagated into the standard error.
+##      a censoring-correction nuisance covariate, a robust affine (LTS)
+##      correction for the compositional background, and a joint sample-level
+##      HC3 variance for the affine-corrected coefficient.
 ##
 ##  The two component p-values are combined by a Bonferroni min-P rule (primary)
 ##  and a Cauchy combination (sensitivity). Multiple testing across taxa is left
 ##  to the caller; apply Benjamini-Hochberg, stats::p.adjust(., "BH"), to the
 ##  reported column.
 ##
-##  The numerics are identical to the implementation used in the simulation
-##  studies. The defaults d0 = 1, m_abund = 5, and min_positive = 3 reproduce
-##  the simulation results exactly.
+##  This implementation corresponds to the revised EM zero-model fit and
+##  joint-HC3 abundance variance. The default values are d0 = 1,
+##  m_abund = 5, and min_positive = 3.
 ##
 ##  Entry points
 ##    dash()           the test: input coercion, feature retention, both arms,
 ##                     and the per-taxon combination, returned as a tidy table
 ##    hric_transform() the HRIC transform, usable on its own
 ##
-##  Dependencies: base R and 'stats'. 'MASS' is optional: when available the
-##  affine correction uses MASS::lqs (least trimmed squares); otherwise a
-##  base-R Theil-Sen fit is used.
+##  Dependencies: base R, 'stats', and 'MASS'. The affine correction uses
+##  MASS::lqs for least trimmed squares inlier selection.
 ##
 ##  Contents
 ##    1. Internal utilities
@@ -49,7 +48,7 @@
 ##    6. DASH: the test
 ## =============================================================================
 
-#' @importFrom stats optim qlogis plogis pnorm dnorm pchisq pt sd mad median qnorm coef p.adjust
+#' @importFrom stats optim qlogis plogis pnorm dnorm pchisq sd mad median qnorm coef p.adjust
 NULL
 
 
@@ -176,16 +175,20 @@ hric_transform <- function(X) {
 #' Fit the per-taxon structural-zero mixture model
 #' @keywords internal
 #' @noRd
-fit_tobit_null <- function(y, N, z = NULL, d0 = 1.0,
-                           g = NULL,
-                           include_group_rho = FALSE,
-                           include_group_eta = FALSE) {
+fit_zero_em <- function(y, N, z = NULL, d0 = 1.0,
+                        g = NULL,
+                        include_group_rho = FALSE,
+                        include_group_eta = FALSE,
+                        maxit = 500L,
+                        tol = 1e-8) {
   y <- as.numeric(y)
   N <- as.numeric(N)
+  
   pos <- y > 0
+  zero <- !pos
   
   ell <- ifelse(pos, log(pmax(y, 1) / N), 0)
-  cc <- log(d0 / N)
+  a_i <- log(d0 / N)
   
   make_zero_design <- function(include_group) {
     if (include_group && is.null(g)) {
@@ -209,86 +212,370 @@ fit_tobit_null <- function(y, N, z = NULL, d0 = 1.0,
   npar_rho <- ncol(X_rho)
   npar_eta <- ncol(X_eta)
   
-  p0 <- min(max(mean(!pos) * 0.5, 0.02), 0.9)
+  p0 <- min(max(mean(zero) * 0.5, 0.02), 0.9)
+  
   init_eta <- if (any(pos)) {
     mean(log(pmax(y[pos] / N[pos], 1e-8)))
   } else {
     -5
   }
   
-  init <- c(
-    c(qlogis(p0), rep(0, npar_rho - 1)),
-    c(init_eta, rep(0, npar_eta - 1)),
-    log(1.0)
-  )
+  alpha <- c(qlogis(p0), rep(0, npar_rho - 1))
+  eta_coef <- c(init_eta, rep(0, npar_eta - 1))
+  omega <- log(1.0)
   
-  lower <- c(rep(-10, npar_rho), rep(-30, npar_eta), log(0.1))
-  upper <- c(rep(10, npar_rho), rep(5, npar_eta), log(8.0))
+  lower_rho <- rep(-10, npar_rho)
+  upper_rho <- rep(10, npar_rho)
   
-  nll <- function(par) {
-    alpha <- par[seq_len(npar_rho)]
-    eta_coef <- par[npar_rho + seq_len(npar_eta)]
-    sig <- exp(par[npar_rho + npar_eta + 1])
-    
-    if (!is.finite(sig) || sig <= 0) return(1e10)
-    
-    rho <- clamp(plogis(as.numeric(X_rho %*% alpha)), 1e-12, 1 - 1e-12)
-    eta <- as.numeric(X_eta %*% eta_coef)
-    
-    a <- (cc - eta) / sig
-    Lz <- rho + (1 - rho) * pnorm(a)
-    Lp <- (1 - rho) * dnorm((ell - eta) / sig) / sig
-    L <- ifelse(pos, Lp, Lz)
-    
-    -sum(log(pmax(L, 1e-300)))
+  lower_eta <- c(rep(-30, npar_eta), log(0.1))
+  upper_eta <- c(rep(5, npar_eta), log(8.0))
+  
+  log_expit <- function(x) {
+    -log1p(exp(-abs(x))) + pmin(x, 0)
   }
   
-  out <- tryCatch(
-    optim(
-      init,
-      nll,
-      method = "L-BFGS-B",
-      lower = lower,
-      upper = upper,
-      control = list(maxit = 500, factr = 1e7)
-    ),
-    error = function(e) NULL
-  )
+  log1m_expit <- function(x) {
+    -log1p(exp(-abs(x))) - pmax(x, 0)
+  }
   
-  par <- if (!is.null(out) && is.finite(out$value)) {
-    out$par
-  } else {
-    tryCatch(
-      optim(
-        init,
-        nll,
-        method = "Nelder-Mead",
-        control = list(maxit = 500, reltol = 1e-8)
-      )$par,
-      error = function(e) init
+  e_step <- function(alpha, eta_coef, omega) {
+    sig <- exp(omega)
+    
+    rho <- clamp(
+      plogis(as.numeric(X_rho %*% alpha)),
+      1e-12,
+      1 - 1e-12
+    )
+    
+    eta <- as.numeric(X_eta %*% eta_coef)
+    tval <- (a_i - eta) / sig
+    Phi <- pnorm(tval)
+    
+    gamma <- numeric(length(y))
+    
+    if (any(zero)) {
+      denom <- pmax(
+        rho[zero] + (1 - rho[zero]) * Phi[zero],
+        1e-300
+      )
+      
+      gamma[zero] <- rho[zero] / denom
+    }
+    
+    gamma[pos] <- 0
+    
+    list(
+      gamma = gamma,
+      rho = rho,
+      eta = eta,
+      sig = sig,
+      tval = tval
     )
   }
   
+  observed_loglik <- function(alpha, eta_coef, omega) {
+    sig <- exp(omega)
+    
+    lp_rho <- as.numeric(X_rho %*% alpha)
+    rho <- clamp(plogis(lp_rho), 1e-12, 1 - 1e-12)
+    eta <- as.numeric(X_eta %*% eta_coef)
+    
+    log_contribution <- numeric(length(y))
+    
+    if (any(zero)) {
+      Phi0 <- pnorm(
+        (a_i[zero] - eta[zero]) / sig
+      )
+      
+      log_contribution[zero] <- log(
+        pmax(
+          rho[zero] +
+            (1 - rho[zero]) * Phi0,
+          1e-300
+        )
+      )
+    }
+    
+    if (any(pos)) {
+      rpos <- (ell[pos] - eta[pos]) / sig
+      
+      log_contribution[pos] <-
+        log1m_expit(lp_rho[pos]) +
+        dnorm(rpos, log = TRUE) -
+        omega
+    }
+    
+    sum(log_contribution)
+  }
+  
+  ## Negative structural-absence Q function.
+  nQ_rho <- function(alpha_candidate, gamma) {
+    lp <- as.numeric(X_rho %*% alpha_candidate)
+    
+    value <- -sum(
+      gamma * log_expit(lp) +
+        (1 - gamma) * log1m_expit(lp)
+    )
+    
+    if (!is.finite(value)) 1e100 else value
+  }
+  
+  gr_nQ_rho <- function(alpha_candidate, gamma) {
+    lp <- as.numeric(X_rho %*% alpha_candidate)
+    rho <- plogis(lp)
+    
+    -as.numeric(
+      crossprod(X_rho, gamma - rho)
+    )
+  }
+  
+  ## Negative present-conditional Q function.
+  nQ_eta <- function(par_candidate, gamma) {
+    eta_candidate <- as.numeric(
+      X_eta %*% par_candidate[seq_len(npar_eta)]
+    )
+    
+    omega_candidate <- par_candidate[npar_eta + 1L]
+    sig_candidate <- exp(omega_candidate)
+    
+    value <- 0
+    
+    if (any(zero)) {
+      t0 <- (
+        a_i[zero] - eta_candidate[zero]
+      ) / sig_candidate
+      
+      value <- value + sum(
+        (1 - gamma[zero]) *
+          pnorm(t0, log.p = TRUE)
+      )
+    }
+    
+    if (any(pos)) {
+      rpos <- (
+        ell[pos] - eta_candidate[pos]
+      ) / sig_candidate
+      
+      value <- value + sum(
+        dnorm(rpos, log = TRUE) -
+          omega_candidate
+      )
+    }
+    
+    value <- -value
+    
+    if (!is.finite(value)) 1e100 else value
+  }
+  
+  gr_nQ_eta <- function(par_candidate, gamma) {
+    eta_candidate <- as.numeric(
+      X_eta %*% par_candidate[seq_len(npar_eta)]
+    )
+    
+    omega_candidate <- par_candidate[npar_eta + 1L]
+    sig_candidate <- exp(omega_candidate)
+    
+    grad_eta <- rep(0, npar_eta)
+    grad_omega <- 0
+    
+    if (any(pos)) {
+      rpos <- (
+        ell[pos] - eta_candidate[pos]
+      ) / sig_candidate
+      
+      grad_eta <- grad_eta +
+        as.numeric(
+          crossprod(
+            X_eta[pos, , drop = FALSE],
+            (
+              ell[pos] - eta_candidate[pos]
+            ) / sig_candidate^2
+          )
+        )
+      
+      grad_omega <- grad_omega +
+        sum(rpos^2 - 1)
+    }
+    
+    if (any(zero)) {
+      t0 <- (
+        a_i[zero] - eta_candidate[zero]
+      ) / sig_candidate
+      
+      log_mills <-
+        dnorm(t0, log = TRUE) -
+        pnorm(t0, log.p = TRUE)
+      
+      mills <- exp(log_mills)
+      
+      if (any(!is.finite(mills))) {
+        return(rep(NA_real_, npar_eta + 1L))
+      }
+      
+      w0 <- 1 - gamma[zero]
+      
+      grad_eta <- grad_eta -
+        as.numeric(
+          crossprod(
+            X_eta[zero, , drop = FALSE],
+            w0 * mills / sig_candidate
+          )
+        )
+      
+      grad_omega <- grad_omega -
+        sum(w0 * t0 * mills)
+    }
+    
+    -c(grad_eta, grad_omega)
+  }
+  
+  ll_old <- observed_loglik(
+    alpha,
+    eta_coef,
+    omega
+  )
+  
+  converged <- FALSE
+  iter <- 0L
+  
+  for (m in seq_len(maxit)) {
+    iter <- m
+    
+    ## E-step.
+    current_e <- e_step(
+      alpha,
+      eta_coef,
+      omega
+    )
+    
+    gamma <- current_e$gamma
+    
+    ## Structural-absence M-step.
+    rho_fit <- tryCatch(
+      optim(
+        par = alpha,
+        fn = nQ_rho,
+        gr = gr_nQ_rho,
+        gamma = gamma,
+        method = "L-BFGS-B",
+        lower = lower_rho,
+        upper = upper_rho,
+        control = list(
+          maxit = 500L,
+          factr = 1e7,
+          pgtol = 1e-8
+        )
+      ),
+      error = function(e) NULL
+    )
+    
+    rho_ok <-
+      !is.null(rho_fit) &&
+      rho_fit$convergence == 0L &&
+      is.finite(rho_fit$value) &&
+      all(is.finite(rho_fit$par))
+    
+    if (!rho_ok) break
+    
+    alpha_new <- rho_fit$par
+    
+    ## Present-conditional M-step.
+    eta_start <- c(eta_coef, omega)
+    
+    eta_fit <- tryCatch(
+      optim(
+        par = eta_start,
+        fn = nQ_eta,
+        gr = gr_nQ_eta,
+        gamma = gamma,
+        method = "L-BFGS-B",
+        lower = lower_eta,
+        upper = upper_eta,
+        control = list(
+          maxit = 500L,
+          factr = 1e7,
+          pgtol = 1e-8
+        )
+      ),
+      error = function(e) NULL
+    )
+    
+    eta_ok <-
+      !is.null(eta_fit) &&
+      eta_fit$convergence == 0L &&
+      is.finite(eta_fit$value) &&
+      all(is.finite(eta_fit$par))
+    
+    if (!eta_ok) break
+    
+    eta_coef_new <-
+      eta_fit$par[seq_len(npar_eta)]
+    
+    omega_new <-
+      eta_fit$par[npar_eta + 1L]
+    
+    ll_new <- observed_loglik(
+      alpha_new,
+      eta_coef_new,
+      omega_new
+    )
+    
+    ## The observed likelihood should not decrease under an exact EM update.
+    if (
+      !is.finite(ll_new) ||
+      ll_new < ll_old - 1e-7
+    ) {
+      break
+    }
+    
+    rel_change <-
+      abs(ll_new - ll_old) /
+      (1 + abs(ll_old))
+    
+    alpha <- alpha_new
+    eta_coef <- eta_coef_new
+    omega <- omega_new
+    ll_old <- ll_new
+    
+    if (rel_change < tol) {
+      converged <- TRUE
+      break
+    }
+  }
+  
+  ## Final E-step at the final parameter estimate.
+  final_e <- e_step(
+    alpha,
+    eta_coef,
+    omega
+  )
+  
   list(
-    alpha = par[seq_len(npar_rho)],
-    eta_coef = par[npar_rho + seq_len(npar_eta)],
-    sig = max(exp(par[npar_rho + npar_eta + 1]), 0.1),
+    alpha = alpha,
+    eta_coef = eta_coef,
+    sig = final_e$sig,
     X_rho = X_rho,
-    X_eta = X_eta
+    X_eta = X_eta,
+    rho = final_e$rho,
+    eta = final_e$eta,
+    gamma = final_e$gamma,
+    logLik = ll_old,
+    converged = converged,
+    iterations = iter
   )
 }
 
 #' Prevalence score p-value and null-model posterior structural-zero probabilities
 #' @keywords internal
 #' @noRd
-tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
+zero_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
   y <- as.numeric(y)
   N <- as.numeric(N)
   
   ## Null zero-model fit for the structural-prevalence score.
   ## The group is not included in either the structural-absence logit or
   ## the present-taxon latent abundance mean.
-  fit <- fit_tobit_null(
+  fit <- fit_zero_em(
     y = y,
     N = N,
     z = z,
@@ -298,20 +585,23 @@ tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
     include_group_eta = FALSE
   )
   
-  rho <- clamp(plogis(as.numeric(fit$X_rho %*% fit$alpha)), 1e-10, 1 - 1e-10)
-  eta <- as.numeric(fit$X_eta %*% fit$eta_coef)
-  sig <- fit$sig
-  
-  pos <- y > 0
-  a <- log(d0 / N)
-  
-  Phi <- pnorm((a - eta) / sig)
-  denom <- pmax(rho + (1 - rho) * Phi, 1e-300)
-  
-  gamma <- ifelse(pos, 0, rho / denom)
-  
-  ## Manuscript version:
-  ## depth enters through a_i = log(d0 / N_i), not by residualizing G on logN.
+  ## Posterior structural-absence probabilities and fitted null probabilities
+  ## from the final E-step.
+  rho <- fit$rho
+  gamma <- fit$gamma
+  ## Do not form the prevalence test from a non-converged null EM fit.
+  if (!isTRUE(fit$converged)) {
+    return(
+      list(
+        p = 1,
+        gamma = gamma,
+        rho = rho,
+        converged = FALSE,
+        iterations = fit$iterations
+      )
+    )
+  }
+  ## Depth enters through a_i = log(d0 / N_i), not by residualizing G on logN.
   gp <- residualize_group(g, z = z)
   
   u <- gp * (gamma - rho)
@@ -319,32 +609,41 @@ tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
   U <- sum(u)
   V <- sum(u^2)
   
-  p <- if (V <= 0 || !is.finite(V)) {
+  p <- if (
+    V <= 0 ||
+    !is.finite(V) ||
+    !is.finite(U)
+  ) {
     1
   } else {
-    pchisq(U^2 / V, df = 1, lower.tail = FALSE)
+    pchisq(
+      U^2 / V,
+      df = 1,
+      lower.tail = FALSE
+    )
   }
   
   list(
     p = p,
     gamma = gamma,
-    rho = rho
+    rho = rho,
+    converged = fit$converged,
+    iterations = fit$iterations
   )
 }
 
 #' Auxiliary posterior structural-zero probabilities and censoring correction
 #' @keywords internal
 #' @noRd
-tobit_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
+zero_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
   y <- as.numeric(y)
   N <- as.numeric(N)
   
   ## Auxiliary zero-model fit for abundance weights.
   ## The group is included in the structural-absence logit so that
   ## group-specific structural prevalence is not forced into the abundance arm.
-  ## The present-taxon latent abundance mean is kept free of the group here;
-  ## the abundance group contrast is tested later in the HRIC regression.
-  fit <- fit_tobit_null(
+  ## The present-taxon latent abundance mean remains free of the group.
+  fit <- fit_zero_em(
     y = y,
     N = N,
     z = z,
@@ -354,33 +653,60 @@ tobit_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
     include_group_eta = FALSE
   )
   
-  rho <- clamp(plogis(as.numeric(fit$X_rho %*% fit$alpha)), 1e-10, 1 - 1e-10)
-  eta <- as.numeric(fit$X_eta %*% fit$eta_coef)
+  ## Quantities from the final auxiliary E-step.
+  rho <- fit$rho
+  gamma <- fit$gamma
+  eta <- fit$eta
   sig <- fit$sig
   
   pos <- y > 0
   a <- log(d0 / N)
-  
   tval <- (a - eta) / sig
-  Phi <- pnorm(tval)
-  denom <- pmax(rho + (1 - rho) * Phi, 1e-300)
   
-  gamma <- ifelse(pos, 0, rho / denom)
+  ## Inverse-Mills left-censoring covariate:
+  ## E[L | L <= a] = eta - sigma * phi(t) / Phi(t).
+  log_ratio <-
+    dnorm(tval, log = TRUE) -
+    pnorm(tval, log.p = TRUE)
   
-  ## Inverse-Mills-type left-censoring covariate for observed zeros.
-  ## E[L | L <= a] = eta - sigma * phi(t) / Phi(t), t=(a-eta)/sigma.
-  ## We include sigma * phi(t) / Phi(t) as a nuisance covariate in the
-  ## abundance regression, with a free coefficient.
-  log_ratio <- dnorm(tval, log = TRUE) - pnorm(tval, log.p = TRUE)
   ratio <- exp(log_ratio)
-  ratio[!is.finite(ratio)] <- 0
   
-  censor_corr <- ifelse(pos, 0, sig * ratio)
-  censor_corr[!is.finite(censor_corr)] <- 0
+  ## Numerical safeguard. For a very negative finite t,
+  ## phi(t) / Phi(t) is approximately -t rather than zero.
+  bad_ratio <- !is.finite(ratio)
+  
+  ratio[
+    bad_ratio &
+      is.finite(tval) &
+      tval < 0
+  ] <- -tval[
+    bad_ratio &
+      is.finite(tval) &
+      tval < 0
+  ]
+  
+  ratio[
+    !is.finite(ratio) |
+      ratio < 0
+  ] <- 0
+  
+  censor_corr <- ifelse(
+    pos,
+    0,
+    sig * ratio
+  )
+  
+  censor_corr[
+    !is.finite(censor_corr)
+  ] <- 0
   
   list(
     gamma = gamma,
-    censor_corr = censor_corr
+    censor_corr = censor_corr,
+    rho = rho,
+    valid = isTRUE(fit$converged),
+    converged = fit$converged,
+    iterations = fit$iterations
   )
 }
 
@@ -399,89 +725,165 @@ tobit_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
 ## Group effect uses an HC3 heteroscedasticity-robust sandwich SE, then an affine
 ## (intercept + slope) bias correction across taxa. W is an n x J matrix of weights.
 ##
-## Robust LTS line fit of the HRIC group coefficients b_j on baseline root abundance
-## v0_j. Returns the bias-corrected residual b_j - (chat + lhat v0_j) together with
-## the 2x2 covariance Sigma of the line estimate (chat, lhat), computed on the LTS
-## inliers H as Sigma = sigma2H * (sum_{k in H} g_k g_k^T)^{-1} with g_k = (1, v0_k)
-## and sigma2H = sum_{k in H} r_k^2 / (|H| - 2). This lets the abundance arm add the
-## line-fit variance g_j^T Sigma g_j to the HC3 variance of beta-hat when forming the
-## standard error of beta-tilde. Uses MASS::lqs when available; falls back to a
-## Theil-Sen fit (base R), and to an intercept-only median if the regressor has no
-## usable spread. The line is fit on abundance-eligible taxa only (b is NA otherwise);
-## differential taxa act as sparse high-residual outliers.
+## Robust affine correction of the raw HRIC group coefficients b_j using
+## baseline root abundance v0_j.
+##
+## An initial LTS fit, or a Theil-Sen fallback when MASS is unavailable, is
+## used to identify the affine-inlier set H. After H is selected, the final
+## affine intercept and slope are obtained by ordinary least squares on H:
+##
+##   a_hat = (G_H^T G_H)^{-1} G_H^T beta_hat_H = B_H beta_hat_H.
+##
+## The same final refit is used for both the corrected coefficient
+##
+##   beta_tilde_j = beta_hat_j - g_j^T a_hat
+##
+## and the joint sample-level HC3 variance. The function therefore returns
+## the corrected coefficients, the inlier indices H, and the matrix B_H.
 hric_line_fit <- function(b, v0) {
   J <- length(b)
   bc <- rep(NA_real_, J)
-  Sigma <- matrix(0, 2, 2)
-  ok <- is.finite(b) & is.finite(v0)
   
-  ## Intercept-only fallback (too few taxa, or no spread in v0).
-  if (sum(ok) < 5 || stats::sd(v0[ok]) < 1e-10) {
-    bb <- b[ok]
-    med <- median(bb, na.rm = TRUE)
-    if (is.finite(med)) {
-      bc[ok] <- bb - med
-      r <- bb - med
-      scl <- stats::mad(r)
-      if (!is.finite(scl) || scl <= 0) scl <- stats::sd(r)
-      if (!is.finite(scl) || scl <= 0) scl <- 1
-      H <- abs(r) <= 2.5 * scl
-      if (sum(H) < 3) H <- rep(TRUE, length(r))
-      s2 <- sum(r[H]^2) / max(sum(H) - 1, 1)
-      Sigma[1, 1] <- s2 / sum(H)   # variance of the common location only
-    }
-    return(list(bc = bc, Sigma = Sigma))
-  }
-  
-  x <- v0[ok]; y <- b[ok]
-  
-  fit <- NULL
-  if (requireNamespace("MASS", quietly = TRUE)) {
-    fit <- tryCatch(MASS::lqs(y ~ x, method = "lts"), error = function(e) NULL)
-  }
-  
-  if (!is.null(fit)) {
-    co <- stats::coef(fit)
-    chat <- co[1]; lhat <- co[2]
-  } else {
-    ## Theil-Sen fallback (no dependency).
-    dx <- outer(x, x, "-"); dy <- outer(y, y, "-"); ut <- upper.tri(dx)
-    sx <- dx[ut]; good <- abs(sx) > 1e-12
-    if (!any(good)) {
-      med <- median(y)
-      bc[ok] <- y - med
-      r <- y - med
-      s2 <- sum(r^2) / max(length(r) - 1, 1)
-      Sigma[1, 1] <- s2 / length(r)
-      return(list(bc = bc, Sigma = Sigma))
-    }
-    lhat <- median(dy[ut][good] / sx[good])
-    chat <- median(y - lhat * x)
-  }
-  
-  r_all <- y - (chat + lhat * x)
-  bc[ok] <- r_all
-  
-  ## LTS reweighting: inliers within 2.5 robust scale units.
-  scl <- stats::mad(r_all)
-  if (!is.finite(scl) || scl <= 0) scl <- stats::sd(r_all)
-  if (!is.finite(scl) || scl <= 0) scl <- 1
-  H <- abs(r_all) <= 2.5 * scl
-  if (sum(H) < 4) H <- rep(TRUE, length(r_all))
-  
-  ## Sigma = sigma2H * (sum_{k in H} g_k g_k^T)^{-1}, g_k = (1, v0_k).
-  gH <- cbind(1, x[H])
-  sigma2H <- sum(r_all[H]^2) / max(sum(H) - 2, 1)
-  Sgg <- crossprod(gH)
-  Sigma <- tryCatch(
-    sigma2H * solve(Sgg),
-    error = function(e) {
-      d <- diag(Sgg); d[d <= 0] <- 1
-      sigma2H * diag(1 / d, 2)
-    }
+  ok_idx <- which(
+    is.finite(b) &
+      is.finite(v0)
   )
   
-  list(bc = bc, Sigma = Sigma)
+  invalid_result <- function() {
+    list(
+      valid = FALSE,
+      bc = bc,
+      H = integer(0),
+      GH = NULL,
+      BH = NULL,
+      coef = c(NA_real_, NA_real_)
+    )
+  }
+  
+  ## The joint affine variance requires a nonsingular
+  ## intercept-plus-slope refit.
+  if (
+    length(ok_idx) < 5L ||
+    stats::sd(v0[ok_idx]) < 1e-10
+  ) {
+    return(invalid_result())
+  }
+  
+  x <- v0[ok_idx]
+  y <- b[ok_idx]
+  
+  initial_fit <- NULL
+  
+  if (!requireNamespace("MASS", quietly = TRUE)) {
+    stop(
+      "Package 'MASS' is required for the LTS affine correction."
+    )
+  }
+  
+  initial_fit <- tryCatch(
+    MASS::lqs(
+      y ~ x,
+      method = "lts"
+    ),
+    error = function(e) NULL
+  )
+  
+  if (is.null(initial_fit)) {
+    return(invalid_result())
+  }
+  
+  initial_coef <- stats::coef(initial_fit)
+  
+  chat_init <- unname(initial_coef[1])
+  lhat_init <- unname(initial_coef[2])
+  
+  if (!all(is.finite(c(chat_init, lhat_init)))) {
+    return(invalid_result())
+  }
+  
+  initial_residual <- y - (
+    chat_init +
+      lhat_init * x
+  )
+  
+  ## Robust reweighting used to identify the affine-inlier set H.
+  robust_scale <- stats::mad(initial_residual)
+  
+  if (
+    !is.finite(robust_scale) ||
+    robust_scale <= 0
+  ) {
+    robust_scale <- stats::sd(initial_residual)
+  }
+  
+  if (
+    !is.finite(robust_scale) ||
+    robust_scale <= 0
+  ) {
+    robust_scale <- 1
+  }
+  
+  H_local <-
+    abs(initial_residual) <=
+    2.5 * robust_scale
+  
+  if (sum(H_local) < 4L) {
+    return(invalid_result())
+  }
+  
+  H_idx <- ok_idx[H_local]
+  
+  GH <- cbind(
+    Intercept = 1,
+    v0 = v0[H_idx]
+  )
+  
+  if (
+    nrow(GH) < 3L ||
+    qr(GH)$rank < 2L
+  ) {
+    return(invalid_result())
+  }
+  
+  Sgg <- crossprod(GH)
+  
+  Sgg_inv <- tryCatch(
+    solve(Sgg),
+    error = function(e) NULL
+  )
+  
+  if (
+    is.null(Sgg_inv) ||
+    any(!is.finite(Sgg_inv))
+  ) {
+    return(invalid_result())
+  }
+  
+  ## Final OLS refit on H. The same BH must be used for both
+  ## the corrected point estimate and the joint variance.
+  BH <- Sgg_inv %*% t(GH)
+  
+  coef_final <- as.numeric(
+    BH %*% b[H_idx]
+  )
+  
+  G_ok <- cbind(
+    1,
+    v0[ok_idx]
+  )
+  
+  bc[ok_idx] <-
+    b[ok_idx] -
+    as.numeric(G_ok %*% coef_final)
+  
+  list(
+    valid = TRUE,
+    bc = bc,
+    H = H_idx,
+    GH = GH,
+    BH = BH,
+    coef = coef_final
+  )
 }
 
 #' DASH abundance arm: weighted least squares on HRIC coordinates
@@ -506,22 +908,54 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
   
   ## Add log library size as a technical nuisance in the abundance arm.
   Z <- make_cov_matrix(z)
-  logN <- safe_scale(log(pmax(N, 1)))
   
-  if (is.null(Z)) {
-    Z <- matrix(logN, ncol = 1)
-    colnames(Z) <- "logN"
-  } else {
-    Z <- cbind(Z, logN = logN)
+  raw_logN <- log(pmax(N, 1))
+  sd_logN <- stats::sd(raw_logN)
+  
+  ## Include log library size only when it has non-negligible variation.
+  if (
+    is.finite(sd_logN) &&
+    sd_logN > 1e-12
+  ) {
+    logN <- as.numeric(
+      (raw_logN - mean(raw_logN)) /
+        sd_logN
+    )
+    
+    if (is.null(Z)) {
+      Z <- matrix(
+        logN,
+        ncol = 1,
+        dimnames = list(NULL, "logN")
+      )
+    } else {
+      Z <- cbind(
+        Z,
+        logN = logN
+      )
+    }
   }
   
-  X_base <- design_matrix(g = g, z = Z, include_group = TRUE)
+  X_base <- design_matrix(
+    g = g,
+    z = Z,
+    include_group = TRUE
+  )
   
+  n <- nrow(M)
   J <- ncol(M)
   
   b <- rep(NA_real_, J)
-  se <- rep(NA_real_, J)
-  df <- rep(NA_real_, J)
+  
+  Phi_raw <- matrix(
+    NA_real_,
+    nrow = n,
+    ncol = J,
+    dimnames = list(
+      rownames(Y),
+      colnames(Y)
+    )
+  )
   
   for (j in seq_len(J)) {
     ## Abundance eligibility: at least m_abund observed positives in each group.
@@ -584,50 +1018,151 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
     bhat <- as.numeric(XtWXinv %*% crossprod(Xs, ys))
     e <- as.numeric(M[, j] - X %*% bhat)
     
-    ## HC3 leverage-adjusted sandwich.
-    h <- rowSums((Xs %*% XtWXinv) * Xs)
-    h <- pmin(pmax(h, 0), 0.99)
+    ## Weighted HC3 leverage.
+    h <- rowSums(
+      (Xs %*% XtWXinv) * Xs
+    )
     
-    meat <- crossprod(X, (w^2 * e^2 / (1 - h)^2) * X)
-    V <- XtWXinv %*% meat %*% XtWXinv
+    h <- pmin(
+      pmax(h, 0),
+      1 - 1e-8
+    )
     
-    vv <- V[gidx, gidx]
-    if (!is.finite(vv) || vv <= 0) next
+    ## Sample-level HC3 contribution to the raw group coefficient:
+    ##
+    ## phi_ij =
+    ## e_G^T A_j^{-1} x_ij
+    ## times
+    ## w_ij e_ij / (1 - h_ij).
+    group_loading <- as.numeric(
+      X %*%
+        XtWXinv[, gidx, drop = FALSE]
+    )
+    
+    phi_j <-
+      group_loading *
+      w *
+      e /
+      (1 - h)
+    
+    vv_raw <- sum(phi_j^2)
+    
+    if (
+      !is.finite(vv_raw) ||
+      vv_raw <= 0 ||
+      any(!is.finite(phi_j))
+    ) {
+      next
+    }
     
     b[j] <- bhat[gidx]
-    se[j] <- sqrt(vv)
-    df[j] <- max(sum(w > 1e-8) - rnk, 1)
+    Phi_raw[, j] <- phi_j
   }
   
   ## Baseline root abundance for the affine HRIC correction.
   P0 <- sweep(Y[g == 0, , drop = FALSE], 1, pmax(N[g == 0], 1), "/")
   v0 <- sqrt(pmax(colMeans(P0), 0))
   
-  ## Affine bias correction (LTS line) plus the covariance of the line estimate.
-  lf <- hric_line_fit(b, v0)
-  bc <- lf$bc
-  
-  ## Propagate line-fit uncertainty into the SE of beta-tilde:
-  ## Var(beta-tilde_j) = se_HC3(beta-hat_j)^2 + g_j^T Sigma g_j, g_j = (1, v0_j).
-  G2 <- cbind(1, v0)
-  var_line <- rowSums((G2 %*% lf$Sigma) * G2)
-  var_line[!is.finite(var_line) | var_line < 0] <- 0
-  se_tilde <- sqrt(se^2 + var_line)
+  ## Robust inlier selection followed by the final OLS affine refit.
+  lf <- hric_line_fit(
+    b = b,
+    v0 = v0
+  )
   
   p <- rep(1, J)
+  tested <- rep(FALSE, J)
+  se_joint <- rep(NA_real_, J)
+  z_stat <- rep(NA_real_, J)
   
-  ## Taxa for which the abundance component was actually formed (eligible + fitted).
-  tested <- is.finite(b) & is.finite(se) & se > 0 & is.finite(df) & is.finite(bc)
+  if (isTRUE(lf$valid)) {
+    ## n x |H| matrix:
+    ## row i contains sample i's HC3 contributions
+    ## to all raw coefficients used in the affine refit.
+    phi_H <- Phi_raw[
+      ,
+      lf$H,
+      drop = FALSE
+    ]
+    
+    if (all(is.finite(phi_H))) {
+      candidate <- which(
+        is.finite(b) &
+          is.finite(lf$bc) &
+          is.finite(v0)
+      )
+      
+      for (j in candidate) {
+        if (any(!is.finite(Phi_raw[, j]))) {
+          next
+        }
+        
+        g_j <- c(
+          1,
+          v0[j]
+        )
+        
+        ## g_j^T B_H: loading of each affine-inlier
+        ## raw coefficient on taxon j's fitted background.
+        affine_loading_j <- as.numeric(
+          t(g_j) %*% lf$BH
+        )
+        
+        ## Sample-level contribution to the fitted affine
+        ## background evaluated at v0_j.
+        phi_background_j <- as.numeric(
+          phi_H %*% affine_loading_j
+        )
+        
+        ## Sample-level contribution to the corrected coefficient:
+        ## phi_corr_ij = phi_ij - g_j^T B_H phi_iH.
+        phi_corr_j <-
+          Phi_raw[, j] -
+          phi_background_j
+        
+        var_joint_j <- sum(
+          phi_corr_j^2
+        )
+        
+        if (
+          !is.finite(var_joint_j) ||
+          var_joint_j <= 0
+        ) {
+          next
+        }
+        
+        se_joint[j] <- sqrt(var_joint_j)
+        
+        z_stat[j] <-
+          lf$bc[j] /
+          se_joint[j]
+        
+        p[j] <-
+          2 * pnorm(
+            -abs(z_stat[j])
+          )
+        
+        tested[j] <- is.finite(p[j])
+      }
+    }
+  }
   
-  ## Finite-sample t calibration on the bias-corrected coefficient.
-  p[tested] <- 2 * pt(abs(bc[tested] / se_tilde[tested]),
-                      df = df[tested], lower.tail = FALSE)
+  bad_p <- !is.finite(p)
+  p[bad_p] <- 1
+  tested[bad_p] <- FALSE
   
-  p[!is.finite(p)] <- 1
   names(p) <- colnames(Y)
   names(tested) <- colnames(Y)
+  names(se_joint) <- colnames(Y)
+  names(z_stat) <- colnames(Y)
   
-  list(p = p, tested = tested)
+  list(
+    p = p,
+    tested = tested,
+    beta_raw = b,
+    beta_corrected = lf$bc,
+    se_joint = se_joint,
+    z = z_stat
+  )
 }
 
 ## -----------------------------------------------------------------------------
@@ -641,7 +1176,8 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #' with a left-censored normal observation component. The abundance arm is a
 #' weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
 #' with auxiliary posterior-presence weights, a censoring-correction nuisance
-#' covariate, an HC3 sandwich standard error, and a robust affine bias correction.
+#' covariate, a robust affine bias correction, and a joint sample-level HC3
+#' standard error for the affine-corrected coefficient.
 #' The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
 #' a Cauchy combination (sensitivity). Multiple testing across taxa is the
 #' caller's responsibility; apply [stats::p.adjust()] with method `"BH"` to
@@ -649,9 +1185,9 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'
 #' The function applies the simulation preprocessing (retain taxa with at least
 #' `min_positive` positive counts, drop empty samples) and then runs the test.
-#' With `min_positive = 3`, `d0 = 1`, and `m_abund = 5`, and with the same
-#' retained count table, group coding, covariates, and optional MASS availability,
-#' the per-taxon p-values reproduce the revised simulation implementation.
+#' The default analysis uses `min_positive = 3`, `d0 = 1`, and
+#' `m_abund = 5`. Results also depend on the retained count table, group
+#' coding, covariates, and availability of MASS for the initial LTS fit.
 #'
 #' @param counts Integer count matrix or data frame, samples (rows) by taxa
 #'   (columns). Column names are used as taxon identifiers; if absent they are
@@ -757,7 +1293,7 @@ dash <- function(counts, group, covariates = NULL,
   
   ## Null zero-model fit for the structural-prevalence score.
   prev_list <- lapply(seq_len(J), function(j) {
-    tobit_prev_and_gamma(
+    zero_prev_and_gamma(
       y = as.numeric(Y[, j]),
       N = N,
       g = g,
@@ -766,13 +1302,25 @@ dash <- function(counts, group, covariates = NULL,
     )
   })
   
-  p_pr <- vapply(prev_list, function(o) o$p, numeric(1))
+  p_pr <- vapply(
+    prev_list,
+    function(o) o$p,
+    numeric(1)
+  )
+  
+  prev_ok <- vapply(
+    prev_list,
+    function(o) isTRUE(o$converged),
+    logical(1)
+  )
+  
   names(p_pr) <- taxa_names
+  names(prev_ok) <- taxa_names
   
   ## Auxiliary zero-model fit for abundance weights and censoring correction.
   ## This fit allows the structural-absence probability to differ by group.
   aux_list <- lapply(seq_len(J), function(j) {
-    tobit_aux_gamma_censor(
+    zero_aux_gamma_censor(
       y = as.numeric(Y[, j]),
       N = N,
       g = g,
@@ -781,8 +1329,23 @@ dash <- function(counts, group, covariates = NULL,
     )
   })
   
-  Gamma_aux <- vapply(aux_list, function(o) o$gamma, numeric(nrow(Y)))
-  Ccor <- vapply(aux_list, function(o) o$censor_corr, numeric(nrow(Y)))
+  Gamma_aux <- vapply(
+    aux_list,
+    function(o) o$gamma,
+    numeric(nrow(Y))
+  )
+  
+  Ccor <- vapply(
+    aux_list,
+    function(o) o$censor_corr,
+    numeric(nrow(Y))
+  )
+  
+  aux_ok <- vapply(
+    aux_list,
+    function(o) isTRUE(o$valid),
+    logical(1)
+  )
   
   colnames(Gamma_aux) <- taxa_names
   rownames(Gamma_aux) <- rownames(Y)
@@ -794,10 +1357,17 @@ dash <- function(counts, group, covariates = NULL,
   ## structural-zero probabilities, not the null-model probabilities.
   W <- 1 - Gamma_aux
   
+  ## A taxon with a non-converged auxiliary EM fit is not eligible
+  ## for the abundance component.
+  if (any(!aux_ok)) {
+    W[, !aux_ok] <- 0
+    Ccor[, !aux_ok] <- 0
+  }
+  
   ## Abundance component:
   ## observed HRIC + log-depth nuisance + auxiliary presence weights +
-  ## censoring-correction covariate + abundance eligibility + HC3/t with
-  ## line-fit variance. Returns the p-values and a logical flag marking the taxa
+  ## censoring-correction covariate + abundance eligibility + joint HC3/Z
+  ## inference. Returns the p-values and a logical flag marking the taxa
   ## for which the abundance component was actually formed (eligible + fitted).
   ab <- hric_wls_p(
     Y = Y,
@@ -817,25 +1387,60 @@ dash <- function(counts, group, covariates = NULL,
   p_ab[!is.finite(p_ab)] <- 1
   
   ## Omnibus combination:
-  ## when both components are formed, combine the two;
-  ## when only the prevalence component is formed there is no second test and no
-  ## multiplicity, so the omnibus p-value equals p_prev (no factor of two).
-  p_cauchy <- vapply(seq_len(J), function(j) {
-    if (isTRUE(unname(tested_ab[j]))) cauchy_combination(c(p_pr[j], p_ab[j])) else unname(p_pr[j])
-  }, numeric(1))
+  ## combine the two component p-values when both components are formed;
+  ## otherwise use the single successfully formed component.
+  p_cauchy <- vapply(
+    seq_len(J),
+    function(j) {
+      has_prev <- isTRUE(prev_ok[j])
+      has_abund <- isTRUE(tested_ab[j])
+      
+      if (has_prev && has_abund) {
+        cauchy_combination(
+          c(p_pr[j], p_ab[j])
+        )
+      } else if (has_prev) {
+        unname(p_pr[j])
+      } else if (has_abund) {
+        unname(p_ab[j])
+      } else {
+        1
+      }
+    },
+    numeric(1)
+  )
   
-  p_bonf <- vapply(seq_len(J), function(j) {
-    if (isTRUE(unname(tested_ab[j]))) min(1, 2 * min(p_pr[j], p_ab[j])) else unname(p_pr[j])
-  }, numeric(1))
+  p_bonf <- vapply(
+    seq_len(J),
+    function(j) {
+      has_prev <- isTRUE(prev_ok[j])
+      has_abund <- isTRUE(tested_ab[j])
+      
+      if (has_prev && has_abund) {
+        min(
+          1,
+          2 * min(p_pr[j], p_ab[j])
+        )
+      } else if (has_prev) {
+        unname(p_pr[j])
+      } else if (has_abund) {
+        unname(p_ab[j])
+      } else {
+        1
+      }
+    },
+    numeric(1)
+  )
   
   ## --- Tidy output ---------------------------------------------------------
   out <- data.frame(
-    taxon             = taxa_names,
-    p_prevalence      = unname(p_pr),
-    p_abundance       = unname(p_ab),
-    abundance_formed  = unname(tested_ab),
-    p_bonf_minp       = unname(p_bonf),
-    p_cauchy          = unname(p_cauchy),
+    taxon              = taxa_names,
+    p_prevalence       = unname(p_pr),
+    prevalence_formed  = unname(prev_ok),
+    p_abundance        = unname(p_ab),
+    abundance_formed   = unname(tested_ab),
+    p_bonf_minp        = unname(p_bonf),
+    p_cauchy           = unname(p_cauchy),
     stringsAsFactors = FALSE
   )
   rownames(out) <- NULL
