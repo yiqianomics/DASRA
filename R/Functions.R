@@ -179,7 +179,7 @@ fit_zero_em <- function(y, N, z = NULL, d0 = 1.0,
                         g = NULL,
                         include_group_rho = FALSE,
                         include_group_eta = FALSE,
-                        maxit = 500L,
+                        maxit = 1000L,
                         tol = 1e-8) {
   y <- as.numeric(y)
   N <- as.numeric(N)
