@@ -26,9 +26,11 @@
 ##  to the caller; apply Benjamini-Hochberg, stats::p.adjust(., "BH"), to the
 ##  reported column.
 ##
-##  This implementation corresponds to the revised EM zero-model fit and
-##  joint-HC3 abundance variance. The default values are d0 = 1,
-##  m_abund = 5, and min_positive = 3.
+##  The zero model can be estimated either by direct observed-data likelihood
+##  optimization or by EM. Direct optimization reproduces the original DASH
+##  implementation and is the default. The abundance component uses the revised
+##  joint-HC3 variance. The default values are d0 = 1, m_abund = 5, and
+##  min_positive = 3.
 ##
 ##  Entry points
 ##    dash()           the test: input coercion, feature retention, both arms,
@@ -80,6 +82,21 @@ safe_scale <- function(x) {
 #' @keywords internal
 #' @noRd
 safe_solve <- function(A) tryCatch(solve(A), error = function(e) qr.solve(A, diag(ncol(A))))
+
+#' Stable lower-tail inverse Mills ratio phi(t) / Phi(t)
+#' @keywords internal
+#' @noRd
+lower_mills_ratio <- function(t) {
+  t <- as.numeric(t)
+  log_ratio <- dnorm(t, log = TRUE) - pnorm(t, log.p = TRUE)
+  ratio <- exp(log_ratio)
+  
+  bad <- !is.finite(ratio)
+  use_asymptotic <- bad & is.finite(t) & t < 0
+  ratio[use_asymptotic] <- -t[use_asymptotic]
+  ratio[!is.finite(ratio) | ratio < 0] <- 0
+  ratio
+}
 
 #' Coerce covariates to a named matrix (or NULL)
 #' @keywords internal
@@ -172,7 +189,181 @@ hric_transform <- function(X) {
 ## 4. Prevalence arm: structural-zero mixture
 ## -----------------------------------------------------------------------------
 
-#' Fit the per-taxon structural-zero mixture model
+#' Fit the per-taxon structural-zero mixture model by direct optimization
+#' of the observed-data likelihood
+#' @keywords internal
+#' @noRd
+fit_zero_optim <- function(y, N, z = NULL, d0 = 1.0,
+                           g = NULL,
+                           include_group_rho = FALSE,
+                           include_group_eta = FALSE) {
+  y <- as.numeric(y)
+  N <- as.numeric(N)
+  pos <- y > 0
+  
+  ell <- ifelse(pos, log(pmax(y, 1) / N), 0)
+  a_i <- log(d0 / N)
+  
+  make_zero_design <- function(include_group) {
+    if (include_group && is.null(g)) {
+      stop("g must be supplied when include_group=TRUE.")
+    }
+    
+    if (include_group) {
+      design_matrix(g = g, z = z, include_group = TRUE)
+    } else if (!is.null(z)) {
+      design_matrix(g = NULL, z = z, include_group = FALSE)
+    } else {
+      X <- matrix(1, length(y), 1)
+      colnames(X) <- "Intercept"
+      X
+    }
+  }
+  
+  X_rho <- make_zero_design(include_group_rho)
+  X_eta <- make_zero_design(include_group_eta)
+  
+  npar_rho <- ncol(X_rho)
+  npar_eta <- ncol(X_eta)
+  
+  p0 <- min(max(mean(!pos) * 0.5, 0.02), 0.9)
+  init_eta <- if (any(pos)) {
+    mean(log(pmax(y[pos] / N[pos], 1e-8)))
+  } else {
+    -5
+  }
+  
+  init <- c(
+    c(qlogis(p0), rep(0, npar_rho - 1)),
+    c(init_eta, rep(0, npar_eta - 1)),
+    log(1.0)
+  )
+  
+  lower <- c(rep(-10, npar_rho), rep(-30, npar_eta), log(0.1))
+  upper <- c(rep(10, npar_rho), rep(5, npar_eta), log(8.0))
+  
+  ## This is the original direct observed-data likelihood objective.
+  nll <- function(par) {
+    alpha <- par[seq_len(npar_rho)]
+    eta_coef <- par[npar_rho + seq_len(npar_eta)]
+    sig <- exp(par[npar_rho + npar_eta + 1L])
+    
+    if (!is.finite(sig) || sig <= 0) return(1e10)
+    
+    rho <- clamp(
+      plogis(as.numeric(X_rho %*% alpha)),
+      1e-12,
+      1 - 1e-12
+    )
+    eta <- as.numeric(X_eta %*% eta_coef)
+    
+    tval <- (a_i - eta) / sig
+    L_zero <- rho + (1 - rho) * pnorm(tval)
+    L_positive <- (1 - rho) * dnorm((ell - eta) / sig) / sig
+    L <- ifelse(pos, L_positive, L_zero)
+    
+    -sum(log(pmax(L, 1e-300)))
+  }
+  
+  ## Preserve the original bounded L-BFGS-B fit and Nelder-Mead fallback.
+  primary_fit <- tryCatch(
+    optim(
+      init,
+      nll,
+      method = "L-BFGS-B",
+      lower = lower,
+      upper = upper,
+      control = list(maxit = 500L, factr = 1e7)
+    ),
+    error = function(e) NULL
+  )
+  
+  fallback_fit <- NULL
+  if (!is.null(primary_fit) && is.finite(primary_fit$value)) {
+    fit_used <- primary_fit
+    par <- primary_fit$par
+    optimizer_used <- "L-BFGS-B"
+  } else {
+    fallback_fit <- tryCatch(
+      optim(
+        init,
+        nll,
+        method = "Nelder-Mead",
+        control = list(maxit = 500L, reltol = 1e-8)
+      ),
+      error = function(e) NULL
+    )
+    
+    if (!is.null(fallback_fit)) {
+      fit_used <- fallback_fit
+      par <- fallback_fit$par
+      optimizer_used <- "Nelder-Mead"
+    } else {
+      fit_used <- NULL
+      par <- init
+      optimizer_used <- "initialization"
+    }
+  }
+  
+  alpha <- par[seq_len(npar_rho)]
+  eta_coef <- par[npar_rho + seq_len(npar_eta)]
+  sig <- max(exp(par[npar_rho + npar_eta + 1L]), 0.1)
+  
+  rho <- clamp(
+    plogis(as.numeric(X_rho %*% alpha)),
+    1e-12,
+    1 - 1e-12
+  )
+  eta <- as.numeric(X_eta %*% eta_coef)
+  tval <- (a_i - eta) / sig
+  Phi <- pnorm(tval)
+  denom <- pmax(rho + (1 - rho) * Phi, 1e-300)
+  gamma <- ifelse(pos, 0, rho / denom)
+  
+  final_nll <- tryCatch(nll(par), error = function(e) NA_real_)
+  valid <-
+    is.finite(final_nll) &&
+    is.finite(sig) &&
+    sig > 0 &&
+    all(is.finite(rho)) &&
+    all(is.finite(eta)) &&
+    all(is.finite(gamma))
+  
+  optimization_succeeded <- !is.null(fit_used)
+  converged <-
+    optimization_succeeded &&
+    isTRUE(fit_used$convergence == 0)
+  
+  iterations <- if (
+    optimization_succeeded &&
+    !is.null(fit_used$counts) &&
+    !is.null(fit_used$counts[["function"]])
+  ) {
+    as.integer(fit_used$counts[["function"]])
+  } else {
+    NA_integer_
+  }
+  
+  list(
+    alpha = alpha,
+    eta_coef = eta_coef,
+    sig = sig,
+    X_rho = X_rho,
+    X_eta = X_eta,
+    rho = rho,
+    eta = eta,
+    gamma = gamma,
+    logLik = if (is.finite(final_nll)) -final_nll else NA_real_,
+    valid = valid,
+    converged = converged,
+    optimization_succeeded = optimization_succeeded,
+    iterations = iterations,
+    optimizer = optimizer_used,
+    method = "optim"
+  )
+}
+
+#' Fit the per-taxon structural-zero mixture model by EM
 #' @keywords internal
 #' @noRd
 fit_zero_em <- function(y, N, z = NULL, d0 = 1.0,
@@ -402,15 +593,7 @@ fit_zero_em <- function(y, N, z = NULL, d0 = 1.0,
         a_i[zero] - eta_candidate[zero]
       ) / sig_candidate
       
-      log_mills <-
-        dnorm(t0, log = TRUE) -
-        pnorm(t0, log.p = TRUE)
-      
-      mills <- exp(log_mills)
-      
-      if (any(!is.finite(mills))) {
-        return(rep(NA_real_, npar_eta + 1L))
-      }
+      mills <- lower_mills_ratio(t0)
       
       w0 <- 1 - gamma[zero]
       
@@ -550,6 +733,15 @@ fit_zero_em <- function(y, N, z = NULL, d0 = 1.0,
     omega
   )
   
+  em_output_valid <-
+    isTRUE(converged) &&
+    is.finite(ll_old) &&
+    is.finite(final_e$sig) &&
+    final_e$sig > 0 &&
+    all(is.finite(final_e$rho)) &&
+    all(is.finite(final_e$eta)) &&
+    all(is.finite(final_e$gamma))
+  
   list(
     alpha = alpha,
     eta_coef = eta_coef,
@@ -560,52 +752,98 @@ fit_zero_em <- function(y, N, z = NULL, d0 = 1.0,
     eta = final_e$eta,
     gamma = final_e$gamma,
     logLik = ll_old,
+    valid = em_output_valid,
     converged = converged,
-    iterations = iter
+    optimization_succeeded = converged,
+    iterations = iter,
+    optimizer = "EM",
+    method = "em"
+  )
+}
+
+#' Fit the per-taxon zero model using the requested numerical method
+#' @keywords internal
+#' @noRd
+fit_zero_model <- function(y, N, z = NULL, d0 = 1.0,
+                           g = NULL,
+                           include_group_rho = FALSE,
+                           include_group_eta = FALSE,
+                           method = c("optim", "em")) {
+  method <- match.arg(method)
+  
+  if (identical(method, "optim")) {
+    return(
+      fit_zero_optim(
+        y = y,
+        N = N,
+        z = z,
+        d0 = d0,
+        g = g,
+        include_group_rho = include_group_rho,
+        include_group_eta = include_group_eta
+      )
+    )
+  }
+  
+  fit_zero_em(
+    y = y,
+    N = N,
+    z = z,
+    d0 = d0,
+    g = g,
+    include_group_rho = include_group_rho,
+    include_group_eta = include_group_eta
   )
 }
 
 #' Prevalence score p-value and null-model posterior structural-zero probabilities
 #' @keywords internal
 #' @noRd
-zero_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
+zero_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0,
+                                zero_method = c("optim", "em")) {
+  zero_method <- match.arg(zero_method)
+  
   y <- as.numeric(y)
   N <- as.numeric(N)
   
   ## Null zero-model fit for the structural-prevalence score.
   ## The group is not included in either the structural-absence logit or
   ## the present-taxon latent abundance mean.
-  fit <- fit_zero_em(
+  fit <- fit_zero_model(
     y = y,
     N = N,
     z = z,
     d0 = d0,
     g = g,
     include_group_rho = FALSE,
-    include_group_eta = FALSE
+    include_group_eta = FALSE,
+    method = zero_method
   )
   
-  ## Posterior structural-absence probabilities and fitted null probabilities
-  ## from the final E-step.
   rho <- fit$rho
   gamma <- fit$gamma
-  ## Do not form the prevalence test from a non-converged null EM fit.
-  if (!isTRUE(fit$converged)) {
+  
+  ## Do not form the prevalence test when the selected fitting method fails
+  ## to produce finite fitted zero-model quantities.
+  if (!isTRUE(fit$valid)) {
     return(
       list(
         p = 1,
         gamma = gamma,
         rho = rho,
-        converged = FALSE,
-        iterations = fit$iterations
+        valid = FALSE,
+        converged = isTRUE(fit$converged),
+        optimization_succeeded = isTRUE(fit$optimization_succeeded),
+        iterations = fit$iterations,
+        method = fit$method,
+        optimizer = fit$optimizer
       )
     )
   }
+  
   ## Depth enters through a_i = log(d0 / N_i), not by residualizing G on logN.
   gp <- residualize_group(g, z = z)
-  
   u <- gp * (gamma - rho)
-  
   U <- sum(u)
   V <- sum(u^2)
   
@@ -616,26 +854,29 @@ zero_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
   ) {
     1
   } else {
-    pchisq(
-      U^2 / V,
-      df = 1,
-      lower.tail = FALSE
-    )
+    pchisq(U^2 / V, df = 1, lower.tail = FALSE)
   }
   
   list(
     p = p,
     gamma = gamma,
     rho = rho,
-    converged = fit$converged,
-    iterations = fit$iterations
+    valid = TRUE,
+    converged = isTRUE(fit$converged),
+    optimization_succeeded = isTRUE(fit$optimization_succeeded),
+    iterations = fit$iterations,
+    method = fit$method,
+    optimizer = fit$optimizer
   )
 }
 
 #' Auxiliary posterior structural-zero probabilities and censoring correction
 #' @keywords internal
 #' @noRd
-zero_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
+zero_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0,
+                                  zero_method = c("optim", "em")) {
+  zero_method <- match.arg(zero_method)
+  
   y <- as.numeric(y)
   N <- as.numeric(N)
   
@@ -643,17 +884,17 @@ zero_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
   ## The group is included in the structural-absence logit so that
   ## group-specific structural prevalence is not forced into the abundance arm.
   ## The present-taxon latent abundance mean remains free of the group.
-  fit <- fit_zero_em(
+  fit <- fit_zero_model(
     y = y,
     N = N,
     z = z,
     d0 = d0,
     g = g,
     include_group_rho = TRUE,
-    include_group_eta = FALSE
+    include_group_eta = FALSE,
+    method = zero_method
   )
   
-  ## Quantities from the final auxiliary E-step.
   rho <- fit$rho
   gamma <- fit$gamma
   eta <- fit$eta
@@ -665,48 +906,20 @@ zero_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
   
   ## Inverse-Mills left-censoring covariate:
   ## E[L | L <= a] = eta - sigma * phi(t) / Phi(t).
-  log_ratio <-
-    dnorm(tval, log = TRUE) -
-    pnorm(tval, log.p = TRUE)
-  
-  ratio <- exp(log_ratio)
-  
-  ## Numerical safeguard. For a very negative finite t,
-  ## phi(t) / Phi(t) is approximately -t rather than zero.
-  bad_ratio <- !is.finite(ratio)
-  
-  ratio[
-    bad_ratio &
-      is.finite(tval) &
-      tval < 0
-  ] <- -tval[
-    bad_ratio &
-      is.finite(tval) &
-      tval < 0
-  ]
-  
-  ratio[
-    !is.finite(ratio) |
-      ratio < 0
-  ] <- 0
-  
-  censor_corr <- ifelse(
-    pos,
-    0,
-    sig * ratio
-  )
-  
-  censor_corr[
-    !is.finite(censor_corr)
-  ] <- 0
+  ratio <- lower_mills_ratio(tval)
+  censor_corr <- ifelse(pos, 0, sig * ratio)
+  censor_corr[!is.finite(censor_corr)] <- 0
   
   list(
     gamma = gamma,
     censor_corr = censor_corr,
     rho = rho,
-    valid = isTRUE(fit$converged),
-    converged = fit$converged,
-    iterations = fit$iterations
+    valid = isTRUE(fit$valid),
+    converged = isTRUE(fit$converged),
+    optimization_succeeded = isTRUE(fit$optimization_succeeded),
+    iterations = fit$iterations,
+    method = fit$method,
+    optimizer = fit$optimizer
   )
 }
 
@@ -722,14 +935,15 @@ zero_aux_gamma_censor <- function(y, N, g, z = NULL, d0 = 1.0) {
 ## while zeros likely to be structural after allowing group-specific prevalence
 ## receive small weights. The abundance regression also includes a taxon-specific
 ## left-censoring correction covariate when it is usable.
-## Group effect uses an HC3 heteroscedasticity-robust sandwich SE, then an affine
-## (intercept + slope) bias correction across taxa. W is an n x J matrix of weights.
+## Group effects are corrected by a robust affine fit across taxa, and the final
+## uncertainty is computed by a joint sample-level HC3 variance. W is an n x J
+## matrix of posterior-presence weights.
 ##
 ## Robust affine correction of the raw HRIC group coefficients b_j using
 ## baseline root abundance v0_j.
 ##
-## An initial LTS fit, or a Theil-Sen fallback when MASS is unavailable, is
-## used to identify the affine-inlier set H. After H is selected, the final
+## An initial LTS fit is used to identify the affine-inlier set H. After H is
+## selected, the final
 ## affine intercept and slope are obtained by ordinary least squares on H:
 ##
 ##   a_hat = (G_H^T G_H)^{-1} G_H^T beta_hat_H = B_H beta_hat_H.
@@ -1173,7 +1387,9 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'
 #' DASH is a two-part, per-taxon differential abundance test. The prevalence arm
 #' is a structural-zero score test from a per-taxon structural-zero mixture model
-#' with a left-censored normal observation component. The abundance arm is a
+#' with a left-censored normal observation component. The zero model may be
+#' estimated either by direct maximization of the observed-data likelihood or
+#' by EM, with direct optimization used by default. The abundance arm is a
 #' weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
 #' with auxiliary posterior-presence weights, a censoring-correction nuisance
 #' covariate, a robust affine bias correction, and a joint sample-level HC3
@@ -1187,7 +1403,7 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #' `min_positive` positive counts, drop empty samples) and then runs the test.
 #' The default analysis uses `min_positive = 3`, `d0 = 1`, and
 #' `m_abund = 5`. Results also depend on the retained count table, group
-#' coding, covariates, and availability of MASS for the initial LTS fit.
+#' coding and covariates. MASS is required for the initial LTS fit.
 #'
 #' @param counts Integer count matrix or data frame, samples (rows) by taxa
 #'   (columns). Column names are used as taxon identifiers; if absent they are
@@ -1197,6 +1413,12 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'   levels, so the second level is treated as the comparison ("case") group.
 #' @param covariates Optional measured covariates (vector, matrix, or data
 #'   frame), one row per sample, supplied to both arms for adjustment.
+#' @param zero_method Numerical method used to estimate each per-taxon
+#'   structural-zero mixture model. `"optim"` directly maximizes the
+#'   observed-data likelihood using the original bounded L-BFGS-B procedure
+#'   with a Nelder-Mead fallback and is the default. `"em"` uses the
+#'   expectation-maximization algorithm. Both methods target the same
+#'   observed-data likelihood.
 #' @param d0 Detection constant for the sample-specific censoring threshold. Default 1.
 #' @param m_abund Abundance-eligibility threshold: the abundance arm is formed
 #'   for a taxon only if it has at least `m_abund` positive counts in each
@@ -1211,7 +1433,9 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'   \describe{
 #'     \item{taxon}{taxon identifier}
 #'     \item{p_prevalence}{prevalence-arm p-value}
+#'     \item{prevalence_formed}{whether the prevalence arm was successfully formed}
 #'     \item{p_abundance}{abundance-arm p-value (1 when the arm is not formed)}
+#'     \item{abundance_formed}{whether the abundance arm was successfully formed}
 #'     \item{p_bonf_minp}{DASH (Bonf-minP) omnibus p-value}
 #'     \item{p_cauchy}{DASH (Cauchy) omnibus p-value}
 #'   }
@@ -1232,7 +1456,10 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'
 #' @export
 dash <- function(counts, group, covariates = NULL,
-                 d0 = 1, m_abund = 5L, min_positive = 3L) {
+                 d0 = 1, m_abund = 5L, min_positive = 3L,
+                 zero_method = c("optim", "em")) {
+  zero_method <- match.arg(zero_method)
+  
   Y <- as.matrix(counts)
   if (!is.numeric(Y)) {
     stop("`counts` must be a numeric count matrix (samples x taxa).")
@@ -1298,7 +1525,8 @@ dash <- function(counts, group, covariates = NULL,
       N = N,
       g = g,
       z = z,
-      d0 = d0
+      d0 = d0,
+      zero_method = zero_method
     )
   })
   
@@ -1310,7 +1538,7 @@ dash <- function(counts, group, covariates = NULL,
   
   prev_ok <- vapply(
     prev_list,
-    function(o) isTRUE(o$converged),
+    function(o) isTRUE(o$valid),
     logical(1)
   )
   
@@ -1325,7 +1553,8 @@ dash <- function(counts, group, covariates = NULL,
       N = N,
       g = g,
       z = z,
-      d0 = d0
+      d0 = d0,
+      zero_method = zero_method
     )
   })
   
@@ -1357,7 +1586,7 @@ dash <- function(counts, group, covariates = NULL,
   ## structural-zero probabilities, not the null-model probabilities.
   W <- 1 - Gamma_aux
   
-  ## A taxon with a non-converged auxiliary EM fit is not eligible
+  ## A taxon with an invalid auxiliary zero-model fit is not eligible
   ## for the abundance component.
   if (any(!aux_ok)) {
     W[, !aux_ok] <- 0
@@ -1444,6 +1673,7 @@ dash <- function(counts, group, covariates = NULL,
     stringsAsFactors = FALSE
   )
   rownames(out) <- NULL
+  attr(out, "zero_method") <- zero_method
   attr(out, "group_levels") <- group_levels
   attr(out, "kept_taxa") <- which(keep_tax)
   attr(out, "kept_samples") <- which(keep_samp)

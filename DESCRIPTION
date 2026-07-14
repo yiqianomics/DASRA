@@ -13,14 +13,15 @@ Description: A two-part differential abundance test for microbiome count data.
     DASH combines a structural-prevalence score test with a present-conditional
     abundance test. The structural-prevalence component uses a per-taxon
     structural-zero mixture model with a left-censored normal observation
-    component, estimated by an expectation-maximization algorithm. The
-    abundance component uses Hellinger-Riemann intrinsic coordinates (HRIC),
-    auxiliary posterior-presence weights, a censoring-correction nuisance
-    covariate, and a robust affine correction for the compositional background.
-    Uncertainty in the affine-corrected abundance coefficient is estimated using
-    a joint sample-level HC3 sandwich variance, with asymptotic-normal inference.
-    The two component p-values are combined per taxon by a Bonferroni min-P rule
-    and a Cauchy combination rule.
+    component, estimated either by direct observed-data likelihood optimization
+    or by an expectation-maximization algorithm. Direct optimization is used
+    by default. The abundance component uses Hellinger-Riemann intrinsic
+    coordinates (HRIC), auxiliary posterior-presence weights, a
+    censoring-correction nuisance covariate, and a robust affine correction for
+    the compositional background. Uncertainty in the affine-corrected abundance
+    coefficient is estimated using a joint sample-level HC3 sandwich variance,
+    with asymptotic-normal inference. The two component p-values are combined
+    per taxon by a Bonferroni min-P rule and a Cauchy combination rule.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
