@@ -10,20 +10,24 @@ Authors@R:
                role = "aut")
     )
 Description: A two-part differential abundance test for microbiome count data.
-    DASH combines a structural-prevalence score test, derived from a
-    per-taxon structural-zero mixture model with a left-censored normal
-    observation component, with a weighted abundance test on Hellinger-Riemann
-    intrinsic coordinates (HRIC). The abundance component uses auxiliary
-    posterior-presence weights, a censoring-correction nuisance covariate, an
-    HC3 sandwich standard error, and a robust affine bias correction. The two
-    arms are combined per taxon by a Bonferroni min-P rule and by a Cauchy rule.
+    DASH combines a structural-prevalence score test with a present-conditional
+    abundance test. The structural-prevalence component uses a per-taxon
+    structural-zero mixture model with a left-censored normal observation
+    component, estimated by an expectation-maximization algorithm. The
+    abundance component uses Hellinger-Riemann intrinsic coordinates (HRIC),
+    auxiliary posterior-presence weights, a censoring-correction nuisance
+    covariate, and a robust affine correction for the compositional background.
+    Uncertainty in the affine-corrected abundance coefficient is estimated using
+    a joint sample-level HC3 sandwich variance, with asymptotic-normal inference.
+    The two component p-values are combined per taxon by a Bonferroni min-P rule
+    and a Cauchy combination rule.
 License: GPL (>= 3)
 Encoding: UTF-8
 Roxygen: list(markdown = TRUE)
 Imports:
-    stats
+    stats,
+    MASS
 Suggests:
-    MASS,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Config/roxygen2/version: 8.0.0
