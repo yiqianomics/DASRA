@@ -209,18 +209,13 @@ fit_tobit_null <- function(y, N, z = NULL, d0 = 1.0,
   npar_rho <- ncol(X_rho)
   npar_eta <- ncol(X_eta)
   
-  p0 <- min(max(mean(!pos) * 0.5, 0.02), 0.9)
+  zero_fraction <- mean(!pos)
+  
   init_eta <- if (any(pos)) {
     mean(log(pmax(y[pos] / N[pos], 1e-8)))
   } else {
     -5
   }
-  
-  init <- c(
-    c(qlogis(p0), rep(0, npar_rho - 1)),
-    c(init_eta, rep(0, npar_eta - 1)),
-    log(1.0)
-  )
   
   lower <- c(rep(-10, npar_rho), rep(-30, npar_eta), log(0.1))
   upper <- c(rep(10, npar_rho), rep(5, npar_eta), log(8.0))
@@ -243,38 +238,240 @@ fit_tobit_null <- function(y, N, z = NULL, d0 = 1.0,
     -sum(log(pmax(L, 1e-300)))
   }
   
-  out <- tryCatch(
-    optim(
-      init,
-      nll,
-      method = "L-BFGS-B",
-      lower = lower,
-      upper = upper,
-      control = list(maxit = 500, factr = 1e7)
-    ),
-    error = function(e) NULL
+  ## Five deterministic starting points.
+  ##
+  ## structural_fraction multiplies the observed zero proportion to
+  ## initialize the structural-absence probability at the reference
+  ## covariate profile, and hence the structural-logit intercept.
+  ##
+  ## The first row exactly reproduces the previous initialization.
+  start_spec <- rbind(
+    c(structural_fraction = 0.50, sigma = 1.0),
+    c(structural_fraction = 0.25, sigma = 0.5),
+    c(structural_fraction = 0.25, sigma = 2.0),
+    c(structural_fraction = 0.75, sigma = 0.5),
+    c(structural_fraction = 0.75, sigma = 2.0)
   )
   
-  par <- if (!is.null(out) && is.finite(out$value)) {
-    out$par
-  } else {
+  make_init <- function(structural_fraction, sigma_start) {
+    p_start <- clamp(
+      structural_fraction * zero_fraction,
+      0.02,
+      0.90
+    )
+    
+    start <- c(
+      qlogis(p_start),
+      rep(0, npar_rho - 1L),
+      init_eta,
+      rep(0, npar_eta - 1L),
+      log(sigma_start)
+    )
+    
+    ## Ensure every starting vector lies inside the L-BFGS-B box.
+    pmin(pmax(start, lower), upper)
+  }
+  
+  starts <- lapply(seq_len(nrow(start_spec)), function(k) {
+    make_init(
+      structural_fraction =
+        start_spec[k, "structural_fraction"],
+      sigma_start =
+        start_spec[k, "sigma"]
+    )
+  })
+  start_keys <- vapply(
+    starts,
+    function(x) paste(format(x, digits = 16), collapse = "|"),
+    character(1)
+  )
+  
+  starts <- starts[!duplicated(start_keys)]
+  ## The first starting point is the original single-start initialization:
+  ## 0.5 times the observed zero proportion and sigma = 1.
+  init <- starts[[1L]]
+  
+  fit_lbfgsb <- function(start) {
     tryCatch(
       optim(
-        init,
-        nll,
-        method = "Nelder-Mead",
-        control = list(maxit = 500, reltol = 1e-8)
-      )$par,
-      error = function(e) init
+        par = start,
+        fn = nll,
+        method = "L-BFGS-B",
+        lower = lower,
+        upper = upper,
+        control = list(
+          maxit = 500,
+          factr = 1e7
+        )
+      ),
+      error = function(e) NULL
     )
   }
+  
+  ## Run bounded L-BFGS-B from every deterministic starting point.
+  lbfgsb_fits <- lapply(starts, fit_lbfgsb)
+  
+  ## A finite fit has a finite objective value and finite parameters,
+  ## regardless of the optimizer convergence code.
+  finite_fit <- vapply(
+    lbfgsb_fits,
+    function(fit) {
+      !is.null(fit) &&
+        is.finite(fit$value) &&
+        all(is.finite(fit$par))
+    },
+    logical(1)
+  )
+  
+  ## A converged fit additionally requires optim() convergence code zero.
+  converged_fit <- vapply(
+    lbfgsb_fits,
+    function(fit) {
+      !is.null(fit) &&
+        is.finite(fit$value) &&
+        all(is.finite(fit$par)) &&
+        isTRUE(fit$convergence == 0L)
+    },
+    logical(1)
+  )
+  
+  select_best <- function(indices) {
+    if (length(indices) == 0L) {
+      return(NULL)
+    }
+    
+    objective_values <- vapply(
+      indices,
+      function(k) lbfgsb_fits[[k]]$value,
+      numeric(1)
+    )
+    
+    best_index <- indices[which.min(objective_values)]
+    
+    lbfgsb_fits[[best_index]]
+  }
+  
+  ## Optimization diagnostics.
+  fit_method <- "initialization"
+  fit_convergence <- NA_integer_
+  used_fallback <- FALSE
+  ## Primary estimate:
+  ## retain the converged bounded fit with the smallest negative
+  ## log-likelihood.
+  best_fit <- if (any(converged_fit)) {
+    fit_method <- "L-BFGS-B"
+    fit_convergence <- 0L
+    select_best(which(converged_fit))
+  } else {
+    NULL
+  }
+  
+  ## Fallback:
+  ## if none of the five bounded runs reports convergence, initialize
+  ## Nelder-Mead from the best finite bounded candidate.
+  if (is.null(best_fit)) {
+    used_fallback <- TRUE
+    best_finite_fit <- if (any(finite_fit)) {
+      select_best(which(finite_fit))
+    } else {
+      NULL
+    }
+    
+    nm_start <- if (!is.null(best_finite_fit)) {
+      best_finite_fit$par
+    } else {
+      init
+    }
+    
+    ## Nelder-Mead does not natively support box constraints.
+    ## This penalized objective preserves the same parameter region.
+    nll_boxed <- function(par) {
+      if (
+        length(par) != length(lower) ||
+        any(!is.finite(par))
+      ) {
+        return(1e12)
+      }
+      
+      below <- pmax(lower - par, 0)
+      above <- pmax(par - upper, 0)
+      
+      if (any(below > 0) || any(above > 0)) {
+        return(
+          1e12 +
+            1e6 * sum(below^2 + above^2)
+        )
+      }
+      
+      nll(par)
+    }
+    
+    nm_fit <- tryCatch(
+      optim(
+        par = nm_start,
+        fn = nll_boxed,
+        method = "Nelder-Mead",
+        control = list(
+          maxit = 500,
+          reltol = 1e-8
+        )
+      ),
+      error = function(e) NULL
+    )
+    
+    nm_valid <-
+      !is.null(nm_fit) &&
+      is.finite(nm_fit$value) &&
+      all(is.finite(nm_fit$par)) &&
+      isTRUE(nm_fit$convergence == 0L) &&
+      all(nm_fit$par >= lower) &&
+      all(nm_fit$par <= upper)
+    
+    ## Use Nelder-Mead only when it converges and improves on the
+    ## best finite L-BFGS-B candidate.
+    if (
+      nm_valid &&
+      (
+        is.null(best_finite_fit) ||
+        nm_fit$value <= best_finite_fit$value
+      )
+    ) {
+      best_fit <- nm_fit
+      fit_method <- "Nelder-Mead"
+      fit_convergence <- nm_fit$convergence
+      used_fallback <- TRUE
+    } else if (!is.null(best_finite_fit)) {
+      best_fit <- best_finite_fit
+      fit_method <- "L-BFGS-B-nonconverged"
+      fit_convergence <- best_finite_fit$convergence
+      used_fallback <- TRUE
+    }
+  }
+  
+  ## Final safeguard used only if every numerical attempt fails.
+  par <- if (!is.null(best_fit)) {
+    best_fit$par
+  } else {
+    init
+  }
+  
+  ## Numerical protection against negligible boundary overshoot.
+  par <- pmin(pmax(par, lower), upper)
   
   list(
     alpha = par[seq_len(npar_rho)],
     eta_coef = par[npar_rho + seq_len(npar_eta)],
     sig = max(exp(par[npar_rho + npar_eta + 1]), 0.1),
     X_rho = X_rho,
-    X_eta = X_eta
+    X_eta = X_eta,
+    optimization = list(
+      method = fit_method,
+      convergence = fit_convergence,
+      objective = if (!is.null(best_fit)) best_fit$value else nll(init),
+      n_starts = length(starts),
+      n_converged = sum(converged_fit),
+      used_fallback = used_fallback
+    )
   )
 }
 
