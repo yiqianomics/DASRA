@@ -2,21 +2,35 @@
 % Please edit documentation in R/Functions.R
 \name{hric_transform}
 \alias{hric_transform}
-\title{Hellinger-Riemann intrinsic coordinates (HRIC) transform}
+\title{Compute Hellinger-Riemann intrinsic coordinates}
 \usage{
 hric_transform(X)
 }
 \arguments{
-\item{X}{A numeric matrix of non-negative abundances (samples x taxa), with
-at least two columns and a positive total in every row.}
+\item{X}{A non-negative numeric matrix with samples in rows and components in
+columns. Every row must have a positive total and at least two components
+must be supplied.}
 }
 \value{
-A matrix of HRIC coordinates with the same dimensions and names as
-\code{X}.
+A numeric matrix with the same dimensions and dimnames as \code{X}.
 }
 \description{
-Map a non-negative abundance matrix to Hellinger-Riemann intrinsic
-coordinates (HRIC). Each row is closed to a composition, mapped to the square-root
-simplex, and contrasted against the uniform composition with an arcsine
-(geodesic) scaling.
+Closes each row to a composition, applies the square-root map, and evaluates
+the spherical logarithm map at the uniform composition. Observed zeros remain
+exact boundary values; no pseudocount is added.
 }
+\examples{
+x <- rbind(
+  sample1 = c(taxon_a = 3, taxon_b = 1, taxon_c = 0),
+  sample2 = c(taxon_a = 0, taxon_b = 2, taxon_c = 5)
+)
+hric_transform(x)
+
+}
+\seealso{
+Other DASH functions:
+\code{\link[=dash]{dash()}},
+\code{\link[=dash_bootstrap]{dash_bootstrap()}},
+\code{\link[=dash_label_swap_check]{dash_label_swap_check()}}
+}
+\concept{DASH functions}

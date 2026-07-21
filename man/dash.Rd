@@ -2,77 +2,140 @@
 % Please edit documentation in R/Functions.R
 \name{dash}
 \alias{dash}
-\title{Depth-Aware Structural-zero Hellinger (DASH) differential abundance test}
+\title{Run DASH differential-abundance analysis}
 \usage{
-dash(counts, group, covariates = NULL, d0 = 1, m_abund = 5L, min_positive = 3L)
+dash(
+  counts,
+  group,
+  covariates = NULL,
+  library_size = NULL,
+  case_level = NULL,
+  d0 = 1,
+  m_abund = 5L,
+  abundance_eligibility = c("pooled", "per_group", "none"),
+  min_positive = 3L,
+  affine_folds = 5L,
+  lts_seed = 1907L,
+  fit_control = list(),
+  return_posteriors = FALSE
+)
 }
 \arguments{
-\item{counts}{Integer count matrix or data frame, samples (rows) by taxa
-(columns). Column names are used as taxon identifiers; if absent they are
-set to \code{tax1}, \code{tax2}, ...}
+\item{counts}{A non-negative integer-valued matrix or data frame with samples
+in rows and taxa in columns.}
 
-\item{group}{Group indicator with exactly two distinct values. Numeric 0/1 is
-used as is. A factor or character vector is mapped to 0/1 by its two sorted
-levels, so the second level is treated as the comparison ("case") group.}
+\item{group}{A binary group indicator with one value per sample.}
 
-\item{covariates}{Optional measured covariates (vector, matrix, or data
-frame), one row per sample, supplied to both arms for adjustment.}
+\item{covariates}{An optional vector, matrix, or data frame of adjustment
+covariates. Character columns are treated as factors, factors use treatment
+contrasts, binary numeric columns are mapped to 0/1, and other numeric
+columns are centered and scaled.}
 
-\item{d0}{Detection constant for the sample-specific censoring threshold. Default 1.}
+\item{library_size}{An optional positive vector containing the sequencing
+depth before DASH taxon filtering. When omitted, row sums of the supplied
+count matrix before DASH filtering are used.}
 
-\item{m_abund}{Abundance-eligibility threshold: the abundance arm is formed
-for a taxon only if it has at least \code{m_abund} positive counts in each
-group. Default 5.}
+\item{case_level}{An optional observed group value to code as 1. When omitted,
+the second observed factor level or larger numeric value is coded as 1.}
 
-\item{min_positive}{Retain a taxon only if it has at least this many positive
-counts across all samples, matching the simulation. Set to 0 to disable
-retention and test the supplied taxa as given. Default 3. Samples with no
-positive counts are always dropped, since the HRIC transform requires a
-positive total in every sample.}
+\item{d0}{A positive detection constant used in the depth-specific boundary
+\code{log(d0 / library_size)}. The default is 1.}
+
+\item{m_abund}{A positive integer controlling abundance-component sparsity
+eligibility. With \code{abundance_eligibility = "pooled"}, at least
+\code{2 * m_abund} observed positives are required across all samples.}
+
+\item{abundance_eligibility}{One of \code{"pooled"}, \code{"per_group"}, or \code{"none"}.
+The default \code{"pooled"} applies a group-blind pooled positive-count filter;
+\code{"per_group"} requires at least \code{m_abund} positives in each group; and
+\code{"none"} relies only on downstream estimability checks.}
+
+\item{min_positive}{A non-negative integer giving the minimum number of
+observed positives required to retain a taxon.}
+
+\item{affine_folds}{An integer of at least 2 giving the requested number of
+deterministic cross-fitting folds when at least ten taxa have estimable raw
+abundance coefficients. Smaller eligible sets use leave-one-taxon-out
+cross-fitting.}
+
+\item{lts_seed}{A non-negative integer seed used internally for deterministic
+least-trimmed-squares selection. The caller's random-number state is
+restored after each internal fit.}
+
+\item{fit_control}{An optional named list overriding zero-model optimization
+controls. Supported elements are \code{maxit}, \code{factr}, \code{nm_maxit}, \code{nm_reltol},
+\code{gradient_mean_tol}, \code{boundary_tol}, \code{information_rel_tol}, and
+\code{expand_bounds}.}
+
+\item{return_posteriors}{Logical. When \code{TRUE}, fitted posterior matrices and
+retained analysis inputs are attached as a \code{posteriors} attribute.}
 }
 \value{
-A data frame with one row per retained taxon and columns:
-\describe{
-\item{taxon}{taxon identifier}
-\item{p_prevalence}{prevalence-arm p-value}
-\item{p_abundance}{abundance-arm p-value (1 when the arm is not formed)}
-\item{p_bonf_minp}{DASH (Bonf-minP) omnibus p-value}
-\item{p_cauchy}{DASH (Cauchy) omnibus p-value}
-}
-The retained sample and taxon indices are attached as the attributes
-\code{kept_samples} and \code{kept_taxa}.
+A data frame with one row per retained taxon. Primary inferential
+columns are \code{p_absence}, \code{p_abundance}, \code{p_bonf_minp}, and \code{p_cauchy}.
+Effect and uncertainty columns include \code{z_absence},
+\code{beta_abundance_raw}, \code{beta_abundance_corrected},
+\code{se_abundance_raw_hc3}, \code{se_abundance_joint_hc3}, and \code{z_abundance}.
+Additional columns report component availability, affine-background
+diagnostics, positive-count summaries, and zero-model fit diagnostics.
+Attributes record group coding, retained sample and taxon indices,
+sequencing depths, retained-table totals, processed covariates, and the
+inferential scope of the working models.
 }
 \description{
-DASH is a two-part, per-taxon differential abundance test. The prevalence arm
-is a structural-zero score test from a per-taxon structural-zero mixture model
-with a left-censored normal observation component. The abundance arm is a
-weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC)
-with auxiliary posterior-presence weights, a censoring-correction nuisance
-covariate, robust LTS selection followed by a final OLS affine refit, and a
-joint sample-level HC3 variance for the affine-corrected coefficient, with
-asymptotic-normal inference.
-The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
-a Cauchy combination (sensitivity). Multiple testing across taxa is the
-caller's responsibility; apply \code{\link[stats:p.adjust]{stats::p.adjust()}} with method \code{"BH"} to
-whichever column you report, as in the simulation study.
+For each retained taxon, \code{dash()} fits a depth-aware structural-absence
+working model, forms a nuisance-adjusted structural-absence score test, and
+estimates a posterior-presence-weighted HRIC abundance contrast with a
+cross-fitted affine closure correction. The primary omnibus p-value is a
+fixed two-component Bonferroni min-P combination.
 }
 \details{
-The function applies the simulation preprocessing (retain taxa with at least
-\code{min_positive} positive counts, drop empty samples) and then runs the test.
-With \code{min_positive = 3}, \code{d0 = 1}, and \code{m_abund = 5}, and with the same
-retained count table, group coding, covariates, and optional MASS availability,
-the per-taxon p-values reproduce the revised simulation implementation.
+The zero model uses \code{library_size} as the pre-filter sequencing-depth
+quantity. HRIC is computed from the composition obtained after DASH taxon
+retention. A component that cannot be estimated is returned as \code{NA}; for the
+primary omnibus test, that component is assigned p = 1 while the factor of
+two is retained. The Cauchy combination is returned only when both component
+p-values are available.
+
+Structural absence is a model-implied latent state. The positive-state model
+is an upper-truncated-normal working likelihood for transformed integer
+counts rather than an exact likelihood for the original count process. The
+abundance HC3 standard error is conditional on fitted auxiliary quantities
+and the cross-fitted affine background. Use \code{\link[=dash_bootstrap]{dash_bootstrap()}} to assess the
+effect of refitting the complete pipeline.
 }
 \examples{
-\dontrun{
+\donttest{
 set.seed(1)
-n <- 80; p <- 40
-Y <- matrix(rpois(n * p, lambda = 5), n, p)
-colnames(Y) <- paste0("tax", seq_len(p))
-grp <- rep(0:1, each = n / 2)
-res <- dash(Y, grp)
-res$q_bonf_minp <- p.adjust(res$p_bonf_minp, "BH")
-head(res)
+n <- 24
+p <- 8
+group <- rep(0:1, each = n / 2)
+counts <- matrix(stats::rpois(n * p, lambda = 3), nrow = n, ncol = p)
+counts[matrix(stats::runif(n * p) < 0.35, nrow = n)] <- 0
+counts[rowSums(counts) == 0, 1] <- 1
+colnames(counts) <- paste0("taxon_", seq_len(p))
+depth <- rowSums(counts) + 1000
+
+result <- dash(
+  counts = counts,
+  group = group,
+  library_size = depth,
+  min_positive = 2,
+  m_abund = 2,
+  affine_folds = 3
+)
+result$q_bonf_minp <- stats::p.adjust(result$p_bonf_minp, method = "BH")
+head(result[c("taxon", "p_absence", "p_abundance", "p_bonf_minp")])
 }
 
 }
+\seealso{
+\code{\link[=hric_transform]{hric_transform()}}, \code{\link[=dash_bootstrap]{dash_bootstrap()}},
+\code{\link[=dash_label_swap_check]{dash_label_swap_check()}}, \code{\link[stats:p.adjust]{stats::p.adjust()}}
+
+Other DASH functions:
+\code{\link[=dash_bootstrap]{dash_bootstrap()}},
+\code{\link[=dash_label_swap_check]{dash_label_swap_check()}},
+\code{\link[=hric_transform]{hric_transform()}}
+}
+\concept{DASH functions}
