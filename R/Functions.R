@@ -492,7 +492,7 @@ tobit_prev_and_gamma <- function(y, N, g, z = NULL, d0 = 1.0) {
     d0 = d0,
     g = g,
     include_group_rho = FALSE,
-    include_group_eta = TRUE
+    include_group_eta = FALSE
   )
   
   rho <- clamp(plogis(as.numeric(fit$X_rho %*% fit$alpha)), 1e-10, 1 - 1e-10)
