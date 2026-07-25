@@ -761,9 +761,18 @@ hric_line_fit <- function(b, v0) {
 #' DASH abundance arm: weighted least squares on HRIC coordinates
 #' @keywords internal
 #' @noRd
-hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
+hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL,
+                       library_size = NULL) {
   Y <- as.matrix(Y)
-  N <- rowSums(Y)
+  N_ret <- rowSums(Y)
+  N_lib <- if (is.null(library_size)) N_ret else as.numeric(library_size)
+  
+  if (length(N_lib) != nrow(Y) || any(!is.finite(N_lib)) || any(N_lib <= 0)) {
+    stop("library_size must contain one finite, positive value per sample.")
+  }
+  if (any(N_lib < N_ret)) {
+    stop("library_size cannot be smaller than the retained-table total.")
+  }
   
   if (!is.null(Ccor)) {
     Ccor <- as.matrix(Ccor)
@@ -781,7 +790,7 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
   ## Add log library size as a technical nuisance in the abundance arm.
   Z <- make_cov_matrix(z)
   
-  raw_logN <- log(pmax(N, 1))
+  raw_logN <- log(N_lib)
   sd_logN <- stats::sd(raw_logN)
   
   ## Include log library size only when it has non-negligible variation.
@@ -932,7 +941,7 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
   }
   
   ## Baseline root abundance for the affine HRIC correction.
-  P0 <- sweep(Y[g == 0, , drop = FALSE], 1, pmax(N[g == 0], 1), "/")
+  P0 <- sweep(Y[g == 0, , drop = FALSE], 1, N_ret[g == 0], "/")
   v0 <- sqrt(pmax(colMeans(P0), 0))
   
   ## Robust inlier selection followed by the final OLS affine refit.
@@ -1051,16 +1060,17 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #' covariate, robust LTS selection followed by a final OLS affine refit, and a
 #' joint sample-level HC3 variance for the affine-corrected coefficient, with
 #' asymptotic-normal inference.
-#' The two arms are combined per taxon by a Bonferroni min-P rule (primary) and by
-#' a Cauchy combination (sensitivity). Multiple testing across taxa is the
+#' The two arms are combined per taxon by a prespecified Bonferroni min-P rule
+#' (primary). A Cauchy combination is reported as a sensitivity analysis when
+#' both arms are formed. Multiple testing across taxa is the
 #' caller's responsibility; apply [stats::p.adjust()] with method `"BH"` to
 #' whichever column you report, as in the simulation study.
 #'
 #' The function applies the simulation preprocessing (retain taxa with at least
 #' `min_positive` positive counts, drop empty samples) and then runs the test.
 #' With `min_positive = 3`, `d0 = 1`, and `m_abund = 5`, and with the same
-#' retained count table, group coding, covariates, and optional MASS availability,
-#' the per-taxon p-values reproduce the revised simulation implementation.
+#' supplied count table, group coding, covariates, library-size input, and optional
+#' MASS availability, the per-taxon p-values reproduce the reference implementation.
 #'
 #' @param counts Integer count matrix or data frame, samples (rows) by taxa
 #'   (columns). Column names are used as taxon identifiers; if absent they are
@@ -1079,6 +1089,12 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'   retention and test the supplied taxa as given. Default 3. Samples with no
 #'   positive counts are always dropped, since the HRIC transform requires a
 #'   positive total in every sample.
+#' @param library_size Optional numeric vector of sample-specific library sizes,
+#'   one value per row of `counts`. If `NULL`, DASH uses the row sums of the
+#'   supplied count table before applying its internal taxon-retention filter.
+#'   Supplied values must be finite, non-negative, and no smaller than the
+#'   corresponding row sums of `counts`; values must be positive for samples
+#'   retained for analysis.
 #'
 #' @return A data frame with one row per retained taxon and columns:
 #'   \describe{
@@ -1086,7 +1102,8 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'     \item{p_prevalence}{prevalence-arm p-value}
 #'     \item{p_abundance}{abundance-arm p-value (1 when the arm is not formed)}
 #'     \item{p_bonf_minp}{DASH (Bonf-minP) omnibus p-value}
-#'     \item{p_cauchy}{DASH (Cauchy) omnibus p-value}
+#'     \item{p_cauchy}{DASH (Cauchy) sensitivity p-value; when the abundance
+#'       arm is not formed, this equals the prevalence-arm p-value}
 #'   }
 #'   The retained sample and taxon indices are attached as the attributes
 #'   `kept_samples` and `kept_taxa`.
@@ -1105,13 +1122,27 @@ hric_wls_p <- function(Y, g, W, z = NULL, m_abund = 5L, Ccor = NULL) {
 #'
 #' @export
 dash <- function(counts, group, covariates = NULL,
-                 d0 = 1, m_abund = 5L, min_positive = 3L) {
+                 d0 = 1, m_abund = 5L, min_positive = 3L,
+                 library_size = NULL) {
   Y <- as.matrix(counts)
   if (!is.numeric(Y)) {
     stop("`counts` must be a numeric count matrix (samples x taxa).")
   }
   n <- nrow(Y)
   if (is.null(colnames(Y))) colnames(Y) <- paste0("tax", seq_len(ncol(Y)))
+  
+  supplied_totals <- rowSums(Y)
+  N_lib <- if (is.null(library_size)) supplied_totals else as.numeric(library_size)
+  
+  if (length(N_lib) != n) {
+    stop("`library_size` must have one value per sample (row of `counts`).")
+  }
+  if (any(!is.finite(N_lib)) || any(N_lib < 0)) {
+    stop("`library_size` must contain finite, non-negative values.")
+  }
+  if (any(N_lib < supplied_totals)) {
+    stop("`library_size` cannot be smaller than the corresponding row sums of `counts`.")
+  }
   
   ## Group indicator -> 0/1.
   if (is.factor(group) || is.character(group)) {
@@ -1153,22 +1184,25 @@ dash <- function(counts, group, covariates = NULL,
   
   keep_samp <- rowSums(Y) > 0
   Y <- Y[keep_samp, , drop = FALSE]
+  N_lib <- N_lib[keep_samp]
   g <- g[keep_samp]
   if (!is.null(z)) z <- z[keep_samp, , drop = FALSE]
+  if (any(N_lib <= 0)) {
+    stop("`library_size` must be positive for every retained sample.")
+  }
   if (length(unique(g)) < 2L) {
     stop("Only one group remains after dropping empty samples.")
   }
   
   ## --- Two-part test -------------------------------------------------------
   J <- ncol(Y)
-  N <- rowSums(Y)
   taxa_names <- colnames(Y)
   
   ## Null zero-model fit for the structural-prevalence score.
   prev_list <- lapply(seq_len(J), function(j) {
     tobit_prev_and_gamma(
       y = as.numeric(Y[, j]),
-      N = N,
+      N = N_lib,
       g = g,
       z = z,
       d0 = d0
@@ -1183,7 +1217,7 @@ dash <- function(counts, group, covariates = NULL,
   aux_list <- lapply(seq_len(J), function(j) {
     tobit_aux_gamma_censor(
       y = as.numeric(Y[, j]),
-      N = N,
+      N = N_lib,
       g = g,
       z = z,
       d0 = d0
@@ -1215,28 +1249,25 @@ dash <- function(counts, group, covariates = NULL,
     W = W,
     z = z,
     m_abund = m_abund,
-    Ccor = Ccor
+    Ccor = Ccor,
+    library_size = N_lib
   )
   p_ab <- ab$p
   tested_ab <- ab$tested
   names(p_ab) <- taxa_names
   names(tested_ab) <- taxa_names
   
-  ## Conservative NA handling.
+  ## Conservative component handling.
   p_pr[!is.finite(p_pr)] <- 1
-  p_ab[!is.finite(p_ab)] <- 1
+  p_ab[!is.finite(p_ab) | !tested_ab] <- 1
   
-  ## Omnibus combination:
-  ## when both components are formed, combine the two;
-  ## when only the prevalence component is formed there is no second test and no
-  ## multiplicity, so the omnibus p-value equals p_prev (no factor of two).
+  ## Cauchy sensitivity combination when both components are formed.
   p_cauchy <- vapply(seq_len(J), function(j) {
     if (isTRUE(unname(tested_ab[j]))) cauchy_combination(c(p_pr[j], p_ab[j])) else unname(p_pr[j])
   }, numeric(1))
   
-  p_bonf <- vapply(seq_len(J), function(j) {
-    if (isTRUE(unname(tested_ab[j]))) min(1, 2 * min(p_pr[j], p_ab[j])) else unname(p_pr[j])
-  }, numeric(1))
+  ## Prespecified two-component Bonferroni-minP rule for every taxon.
+  p_bonf <- pmin(1, 2 * pmin(p_pr, p_ab))
   
   ## --- Tidy output ---------------------------------------------------------
   out <- data.frame(
