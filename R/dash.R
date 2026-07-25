@@ -136,11 +136,6 @@ empirical_null_scale <- function(z, min_taxa = 30) {
 #' @noRd
 cauchy_combination <- function(ps) { ps <- ps[is.finite(ps)]; if (!length(ps)) return(NA_real_); ps <- pmin(pmax(ps, 1e-15), 1 - 1e-15); 0.5 - atan(mean(tan((0.5 - ps) * pi))) / pi }
 
-#' Bonferroni min-P combination of p-values
-#' @keywords internal
-#' @noRd
-bonf_minp <- function(ps) { ps <- ps[is.finite(ps)]; if (!length(ps)) return(NA_real_); min(1, length(ps) * min(ps)) }
-
 ## -----------------------------------------------------------------------------
 ## 3. HRIC transform
 ## -----------------------------------------------------------------------------
