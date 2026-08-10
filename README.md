@@ -1,181 +1,188 @@
-# DASH
+# DORAM
 
-**DASH** is an R package for two-group microbiome differential abundance analysis in sparse count data.
+DORAM performs depth-aware, taxonwise inference for two ecological endpoints
+in microbiome count data: latent occupancy and zero-inclusive read-relative
+abundance. It models each raw count together with the original sequencing
+depth, allowing an observed zero to be either structural absence or a
+finite-depth sampling zero.
 
-DASH stands for **Depth-Aware Structural-zero and Hellinger**. The method is designed for settings where zeros are common and biologically ambiguous: an observed zero may reflect limited sequencing depth, or it may indicate structural absence of a taxon in a biological group. DASH combines a depth-aware prevalence component with an abundance component based on Hellinger-Riemann intrinsic coordinates.
-
-## Overview
-
-For each taxon, DASH forms two complementary tests:
-
-1. **Prevalence arm**
-   A structural-zero score test derived from a per-taxon zero-inflated Tobit model. Library size enters through a depth-aware censoring threshold, so a zero observed in a deep sample contributes stronger evidence for true absence than a zero observed in a shallow sample.
-
-2. **Abundance arm**
-   A weighted least squares test on Hellinger-Riemann intrinsic coordinates (HRIC). The abundance arm uses posterior-presence weights from the prevalence model, includes log library size as a technical nuisance covariate, uses an HC3 sandwich standard error, and applies a robust affine correction for compositional background bias.
-
-The two component p-values are combined per taxon by:
-
-* `p_bonf_minp`: Bonferroni min-P combination, used as the primary DASH omnibus p-value.
-* `p_cauchy`: Cauchy combination, provided as a sensitivity analysis.
-
-Multiple testing across taxa is left to the user. In typical differential abundance analysis, apply Benjamini-Hochberg correction to `p_bonf_minp`.
+For every taxon, DORAM reports an occupancy test, an ecological abundance
+test, and a covariance-aware joint test. It does not normalize counts, add
+pseudocounts, discard zeros, or use resampling calibration.
 
 ## Installation
 
-Install the development version from GitHub:
-
 ```r
-# install.packages("remotes")
-remotes::install_github("yiqianomics/DASH")
-```
-
-Alternatively, if you have cloned the repository locally:
-
-```r
-# install.packages("devtools")
-devtools::install_local("DASH")
-```
-
-Then load the package:
-
-```r
-library(dash)
+devtools::install("yiqianomics/DORAM")
+library(DORAM)
 ```
 
 ## Quick start
 
+`counts` is a samples-by-taxa table of raw counts. `metadata` is a data frame
+whose row names identify the same samples. `group`, `library_size`, and
+`covariates` name columns in `metadata`.
+
 ```r
-library(dash)
-
-set.seed(1)
-
-n <- 80
-p <- 40
-
-counts <- matrix(rpois(n * p, lambda = 5), nrow = n, ncol = p)
-colnames(counts) <- paste0("taxon_", seq_len(p))
-
-group <- factor(
-  rep(c("Control", "Case"), each = n / 2),
-  levels = c("Control", "Case")
+fit <- DORAM(
+  counts = count_table,
+  metadata = sample_data,
+  group = "condition",
+  reference = "control",
+  library_size = "original_read_depth",
+  covariates = c("age", "sex"),
+  cores = 4L
 )
 
-res <- dash(counts, group)
-
-res$q_bonf_minp <- p.adjust(res$p_bonf_minp, method = "BH")
-
-head(res[order(res$q_bonf_minp), ])
+fit
+fit$results
 ```
 
-## Input format
-
-The main function is:
+The public interface is intentionally compact:
 
 ```r
-dash(counts, group, covariates = NULL, d0 = 1, m_abund = 5L, min_positive = 3L)
-```
-
-### `counts`
-
-`counts` should be a numeric count matrix or data frame with:
-
-* rows = samples
-* columns = taxa
-* non-negative count values
-* at least two taxa after filtering
-* positive total abundance for retained samples
-
-Column names are used as taxon identifiers. If column names are absent, DASH assigns names of the form `tax1`, `tax2`, and so on.
-
-### `group`
-
-`group` must contain exactly two distinct groups.
-
-Numeric group variables are mapped to 0/1 using the larger value as the comparison group. Factor or character group variables are mapped according to their two levels, with the second level treated as the comparison group.
-
-For clarity, it is recommended to specify factor levels explicitly:
-
-```r
-group <- factor(group, levels = c("Control", "Case"))
-```
-
-### `covariates`
-
-Optional covariates can be supplied as a vector, matrix, or data frame with one row per sample. These covariates are used for adjustment in both the prevalence and abundance arms.
-
-For categorical covariates, use `model.matrix()` to construct a numeric design matrix:
-
-```r
-metadata <- data.frame(
-  age = rnorm(n),
-  batch = factor(rep(1:4, length.out = n))
+DORAM(
+  counts,
+  metadata,
+  group,
+  library_size,
+  covariates = NULL,
+  reference = NULL,
+  taxa = NULL,
+  cores = 1L,
+  verbose = FALSE
 )
-
-Z <- model.matrix(~ age + batch, data = metadata)[, -1, drop = FALSE]
-
-res <- dash(counts, group, covariates = Z)
 ```
 
-## Output
+## Inputs
 
-`dash()` returns a data frame with one row per retained taxon:
+### Counts and sample IDs
 
-| Column         | Description                                                                   |
-| -------------- | ----------------------------------------------------------------------------- |
-| `taxon`        | Taxon identifier                                                              |
-| `p_prevalence` | P-value from the prevalence arm                                               |
-| `p_abundance`  | P-value from the abundance arm; set to 1 when the abundance arm is not formed |
-| `p_bonf_minp`  | Primary DASH omnibus p-value using Bonferroni min-P combination               |
-| `p_cauchy`     | DASH omnibus p-value using Cauchy combination                                 |
+- `counts` must have samples in rows, taxa in columns, and finite
+  nonnegative-integer entries.
+- Both `counts` and `metadata` must have unique, nonempty sample row names and
+  exactly the same sample-ID set.
+- Metadata rows may be in a different order. DORAM matches them to `counts` by
+  ID; it never silently drops samples or binds them by position.
 
-Example:
+### Original sequencing depth
+
+`library_size` must name a metadata column containing the original,
+unfiltered, positive integer sequencing depth for every sample. Do not replace
+it with the row sum of a taxon-filtered table. DORAM checks numerical
+compatibility between counts and depth, but it cannot verify the column's
+provenance.
+
+### Group and reference
+
+`group` must name a metadata column with exactly two observed levels. Supply
+`reference` for character or factor groups. It may be omitted only when the
+group is logical (`FALSE` is the reference) or numeric 0/1 (0 is the
+reference). The fitted comparison is recorded in `fit$contrast`.
+
+### Covariates
+
+`covariates` is `NULL` or a vector of metadata column names. Numeric variables
+are used directly. Logical, factor, and character variables are expanded into
+treatment-coded indicator columns. Factor level order determines its baseline;
+character levels use radix-sorted order. This coding is fixed by DORAM and does
+not depend on the user's global contrast options.
+
+Do not repeat the tested group in `covariates`. DORAM constructs one numeric
+covariate design and uses it in the structural, conditional-present, and
+ecological components.
+
+### Taxa
+
+By default, every count-table column is tested. `taxa` can select unique taxon
+names or column indices. The selected set defines the family used for BH
+adjustment, so any analysis filter should be specified before examining
+group-association results. Taxon selection never changes the original library
+sizes.
+
+## Results
+
+`fit$results` contains one row per taxon:
+
+| Column | Meaning |
+|---|---|
+| `p_occupancy`, `q_occupancy` | Raw and BH-adjusted occupancy p-values |
+| `ecological_difference` | Adjusted comparison-minus-reference difference in all-sample `Y/N` |
+| `p_ecological`, `q_ecological` | Raw and BH-adjusted ecological p-values |
+| `p_joint`, `q_joint` | Raw and BH-adjusted joint p-values |
+| `status_*` | `ok` or an explicit reason that an endpoint was unavailable |
+
+The detailed three-row-per-taxon table is `fit$tests`; it includes the test
+statistic, degrees of freedom, log p-value, and endpoint availability.
+`as.data.frame(fit)` returns the concise `fit$results` table.
+
+BH adjustment is performed separately for occupancy, ecological, and joint
+families. Every selected taxon remains in the corresponding family denominator.
+An unavailable endpoint retains `NA` p- and q-values and is never counted as a
+discovery.
+
+DORAM fails closed: it does not drop a failed taxon, substitute p = 1, retry
+with another calibration, or collapse the joint test to one degree of freedom.
+Ecological inference can remain available when occupancy is unavailable, but
+the joint test requires both components.
+
+Additional information is available without cluttering the printed result:
 
 ```r
-res <- dash(counts, group)
-res$q_dash <- p.adjust(res$p_bonf_minp, method = "BH")
-
-sig <- subset(res, q_dash < 0.05)
-sig
+fit$descriptives       # zeros, positives, and mean Y/N by group
+fit$diagnostics        # numerical fit and endpoint diagnostics
+fit$posterior          # restricted-null structural probabilities
 ```
 
-The returned object also stores three attributes:
+## Endpoint interpretation
+
+- **Occupancy** is a one-degree-of-freedom test of equality of the latent
+  structural-absence probability. Because occupancy is one minus structural
+  absence, this is equivalently an occupancy-equality test. It is not a test of
+  observed zero/nonzero prevalence.
+- **Ecological abundance** is a one-degree-of-freedom adjusted group contrast
+  in `Y/N` using every sample, including all zeros. It is read-relative, not
+  positive-only or absolute abundance.
+- **Joint** is a covariance-aware two-degree-of-freedom test that neither
+  endpoint changes. It uses the cross-endpoint covariance and is not a
+  combination of marginal p-values.
+
+Occupancy and ecological abundance can capture overlapping aspects of the same
+ecological change. They should not be described as independent biological
+mechanisms.
+
+## Restricted-null structural probabilities
+
+The fitted object contains three samples-by-taxa matrices:
 
 ```r
-attr(res, "group_levels")
-attr(res, "kept_taxa")
-attr(res, "kept_samples")
+fit$posterior$rho_null
+fit$posterior$gamma_null
+fit$posterior$tau_null
 ```
 
-These record the group coding, retained taxa, and retained samples after preprocessing.
+`rho_null` is the fitted structural-absence mixing probability under the
+occupancy null. `gamma_null` is the corresponding posterior structural-absence
+probability after observing count and depth; it is exactly zero for a positive
+count. `tau_null` is `1 - gamma_null`.
 
-## Default preprocessing
+These are plug-in quantities from the restricted model with the occupancy
+group effect fixed at zero. They do not include parameter uncertainty, are not
+posteriors from an unrestricted alternative model, and must not be interpreted
+as estimated group effects. DORAM therefore does not report an occupancy odds
+ratio or confidence interval.
 
-By default, DASH uses the same preprocessing choices as the simulation implementation:
+## Scope
 
-```r
-dash(counts, group, d0 = 1, m_abund = 5L, min_positive = 3L)
-```
-
-The defaults mean:
-
-* `min_positive = 3`: retain taxa with at least three positive counts across all samples.
-* `m_abund = 5`: form the abundance arm only for taxa with at least five positive counts in each group.
-* `d0 = 1`: use 1 as the detection constant in the Tobit censoring threshold.
-
-Samples with zero total abundance after taxon filtering are automatically dropped, because HRIC requires a positive row total.
-
-To test all supplied taxa without the default positive-count retention filter:
-
-```r
-res <- dash(counts, group, min_positive = 0)
-```
-
-## Method summary
-
-DASH targets two complementary signals:
-
-* a change in structural absence or prevalence;
-* a change in abundance conditional on non-structural presence.
-
-The prevalence arm uses a depth-aware zero-inflated Tobit model to estimate posterior structural-zero probabilities. The abundance arm uses HRIC coordinates computed from the observed composition, with posterior-presence weights and robust standard errors. The final per-taxon DASH p-value combines the two arms while avoiding an unnecessary two-test penalty when the abundance arm is not formed.
+- The latent occupancy interpretation depends on the structural-absence and
+  conditional-present count mixture being scientifically reasonable.
+- Exact sequencing depth addresses finite-depth sampling but does not by
+  itself remove latent depth dependence. Any depth adjustment should be
+  scientifically prespecified and changes the conditional estimand.
+- The ecological endpoint is read-relative and does not remove compositional
+  closure.
+- Empirical-sandwich calibration robustifies score variance; it cannot repair
+  a misspecified latent count model.
+- Inference is first-order asymptotic and assumes independent samples.
+  Clustered, repeated, longitudinal, or matched observations require a method
+  that represents their dependence structure.

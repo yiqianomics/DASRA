@@ -1,33 +1,40 @@
-Package: dash
+Package: DORAM
 Type: Package
-Title: Depth-Aware Structural-Zero and Hellinger Test for Microbiome Differential Abundance
-Version: 0.1.0
-Authors@R:
-    c(
-        person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
-               role = c("aut", "cre")),
-        person("Zihan", "Zhu", email = "zihan.zhu@yale.edu",
-               role = "aut")
+Title: Depth-Aware Structural-Absence and Zero-Inclusive Ecological Abundance Testing
+Version: 0.8.0
+Authors@R: c(
+    person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
+           role = c("aut", "cre")),
+    person("Zihan", "Zhu", email = "zihan.zhu@yale.edu",
+           role = "aut")
     )
-Description: A two-part differential abundance test for microbiome count data.
-    DASH combines a structural-prevalence score test with a present-conditional
-    abundance test. The structural-prevalence component uses a per-taxon
-    structural-zero mixture model with a left-censored normal observation
-    component. The abundance component uses Hellinger-Riemann intrinsic
-    coordinates (HRIC), auxiliary posterior-presence weights, a
-    censoring-correction nuisance covariate, robust least-trimmed-squares
-    selection followed by a final ordinary-least-squares affine refit, and a
-    joint sample-level HC3 sandwich variance for the affine-corrected
-    coefficient, with asymptotic-normal inference. The two component p-values
-    are combined per taxon by a Bonferroni min-P rule and a Cauchy combination
-    rule.
+Description: Implements taxonwise inference for a depth-aware zero-inflated
+    binomial-logistic-normal model for microbiome count data. The package uses
+    a restricted nuisance-projected score to test equality of the latent
+    structural-absence probability (equivalently, equality of occupancy), an
+    all-sample zero-inclusive read-relative ecological abundance contrast, and
+    a covariance-aware two-degree-of-freedom joint null. Inference uses
+    analytic empirical-sandwich chi-squared calibration without bootstrap or
+    multiplier resampling, pseudocounts, zero removal, or positive-count-only
+    preprocessing.
 License: GPL (>= 3)
 Encoding: UTF-8
-Roxygen: list(markdown = TRUE)
+Depends:
+    R (>= 4.2.0)
 Imports:
+    numDeriv,
+    parallel,
+    statmod,
     stats,
-    MASS
+    utils
 Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
-Config/roxygen2/version: 8.0.0
+Roxygen: list(markdown = TRUE)
+Collate:
+    '00_count_native.R'
+    '01_analytic_sandwich.R'
+    '02_interface_helpers.R'
+    'DORAM.R'
+NeedsCompilation: no
+Config/roxygen2/version: 8.1.0
