@@ -13,7 +13,7 @@ pseudocounts, discard zeros, or use resampling calibration.
 ## Installation
 
 ```r
-devtools::install("yiqianomics/DORAM")
+remotes::install_github("yiqianomics/DORAM")
 library(DORAM)
 ```
 
