@@ -1,17 +1,15 @@
-#' Test latent occupancy and zero-inclusive ecological abundance
+#' Test latent occupancy and zero-inclusive abundance
 #'
 #' @description
-#' `DORAM()` tests two ecological endpoints for every selected taxon. The
+#' `DORAM()` tests two endpoints for every selected taxon. The
 #' occupancy endpoint concerns latent structural absence rather than observed
-#' zero/nonzero prevalence. The ecological endpoint compares the read-relative
+#' zero/nonzero prevalence. The abundance endpoint compares the read-relative
 #' abundance `Y/N` across all samples, including zeros. A covariance-aware
 #' two-degree-of-freedom joint test evaluates whether either endpoint changes.
 #'
 #' The function uses raw counts and the original sequencing depth directly. It
-#' does not normalize counts, add pseudocounts, remove zeros, automatically
-#' filter taxa, or use resampling. Tests that cannot be calibrated safely are
-#' returned as unavailable rather than being retried with a different
-#' procedure.
+#' does not normalize counts, add pseudocounts, remove zeros, or automatically
+#' filter taxa.
 #'
 #' @param counts A numeric matrix or data frame with samples in rows and taxa
 #'   in columns. Entries must be finite nonnegative integers. Unique sample row
@@ -42,12 +40,21 @@
 #' @param verbose If `TRUE`, print taxon-level progress. The default is
 #'   `FALSE`.
 #'
-#' @return An object of class `DORAM`. Its main component, `results`, contains
-#'   one row per taxon with raw p-values, BH-adjusted q-values, endpoint status,
-#'   and the ecological difference (comparison minus reference). The `tests`
-#'   component contains the corresponding statistics and degrees of freedom.
-#'   `descriptives`, `diagnostics`, and restricted-null posterior matrices are
-#'   retained for inspection but are not printed by default.
+#' @return An object of class `DORAM` with the following components:
+#'
+#' - `results`: one row per taxon with occupancy, abundance, and joint p- and
+#'   BH-adjusted q-values.
+#' - `details`: long-form estimates, test statistics, degrees of freedom,
+#'   p-values, q-values, and endpoint availability.
+#' - `descriptives`: taxon-level zero counts, positive counts, and group means.
+#' - `diagnostics`: fit, endpoint, and parameter-boundary diagnostics.
+#' - `posterior`: restricted-null `rho_null`, `gamma_null`, and `tau_null`
+#'   matrices.
+#' - `contrast`: reference and comparison group labels.
+#' - `sample_id` and `taxa`: analyzed sample and taxon identifiers.
+#' - `settings`: input-column, covariate-coding, multiplicity, and parallel
+#'   settings.
+#' - `call`: the matched function call.
 #'
 #' @details
 #' The occupancy statistic is a nuisance-projected score test fitted under the
@@ -58,13 +65,13 @@
 #' null; they are not posterior predictions from an unrestricted group-effect
 #' model. DORAM does not report an occupancy odds ratio or confidence interval.
 #'
-#' The ecological difference is the adjusted comparison-minus-reference
+#' The abundance estimate in `details` is the adjusted comparison-minus-reference
 #' coefficient for all-sample `Y/N`. It is read-relative, not absolute
 #' abundance, and no compositional-closure correction is performed. The joint
 #' statistic uses the estimated cross-endpoint covariance; it is not a
 #' combination of two marginal p-values.
 #'
-#' Multiplicity adjustment is performed separately for occupancy, ecological,
+#' Multiplicity adjustment is performed separately for occupancy, abundance,
 #' and joint tests with the Benjamini--Hochberg procedure. Every selected taxon
 #' remains in its family denominator. An unavailable test retains `NA` for its
 #' p- and q-values and is not a discovery.
@@ -107,7 +114,7 @@
 #'   as.integer(rmultinom(1, reads[i], probabilities)[1:3, 1])
 #' }, integer(3)))
 #' colnames(count_table) <- c(
-#'   "joint_signal", "ecological_signal", "null_taxon"
+#'   "joint_signal", "abundance_signal", "null_taxon"
 #' )
 #' rownames(count_table) <- sample_id
 #' sample_data <- data.frame(
@@ -132,13 +139,15 @@
 #' )
 #' fit
 #' fit$results
-#' fit$tests[, c(
+#' fit$details[, c(
 #'   "taxon", "endpoint", "available", "p_value", "q_value", "status"
 #' )]
 #' }
 #'
 #' @importFrom stats constrOptim dbinom dnorm integrate lm.fit median pchisq
 #' @importFrom stats plogis pnorm qlogis sd setNames uniroot
+#' @importFrom Rcpp evalCpp
+#' @useDynLib DORAM, .registration = TRUE
 #' @importFrom utils tail
 #' @export
 DORAM <- function(
@@ -213,10 +222,10 @@ DORAM <- function(
   )
   names(fitted_taxa) <- selected_taxa
 
-  tests <- do.call(rbind, lapply(fitted_taxa, `[[`, "rows"))
-  rownames(tests) <- NULL
-  tests <- .doram_adjust_results(tests)
-  results <- .doram_primary_results(tests, selected_taxa)
+  details <- do.call(rbind, lapply(fitted_taxa, `[[`, "rows"))
+  rownames(details) <- NULL
+  details <- .doram_adjust_results(details)
+  results <- .doram_primary_results(details, selected_taxa)
   descriptives <- .doram_descriptives(
     selected_counts,
     library_size = original_depth,
@@ -243,17 +252,23 @@ DORAM <- function(
     rbind,
     lapply(fitted_taxa, `[[`, "endpoint_diagnostics")
   )
+  boundary_diagnostics <- do.call(
+    rbind,
+    lapply(fitted_taxa, `[[`, "boundary_diagnostics")
+  )
   rownames(fit_diagnostics) <- rownames(endpoint_diagnostics) <- NULL
+  rownames(boundary_diagnostics) <- NULL
 
   structure(
     list(
       call = call,
       results = results,
-      tests = tests,
+      details = details,
       descriptives = descriptives,
       diagnostics = list(
         fit = fit_diagnostics,
-        endpoint = endpoint_diagnostics
+        endpoint = endpoint_diagnostics,
+        boundary = boundary_diagnostics
       ),
       posterior = posterior,
       contrast = c(
@@ -270,12 +285,7 @@ DORAM <- function(
         categorical_levels = covariate_info$levels,
         metadata_reordered = aligned$reordered,
         family_size = length(selected_taxa),
-        sampling_design = "iid_random_design",
-        strata = NULL,
-        integration_level = "production",
         p_adjust_method = "BH",
-        alpha = 0.05,
-        keep_full_fits = FALSE,
         cores = cores
       )
     ),
@@ -283,6 +293,7 @@ DORAM <- function(
   )
 }
 
+#' @noRd
 #' @export
 print.DORAM <- function(x, ...) {
   if (!inherits(x, "DORAM")) .doram_abort("x must be a DORAM fit")
@@ -294,21 +305,21 @@ print.DORAM <- function(x, ...) {
   )
   shown <- utils::head(x$results, 6L)
   display_columns <- c(
-    "taxon", "q_occupancy", "ecological_difference", "q_ecological",
-    "q_joint"
+    "taxon", "q_occupancy", "q_abundance", "q_joint"
   )
   print(shown[, display_columns, drop = FALSE], row.names = FALSE, digits = 4)
   if (nrow(x$results) > nrow(shown)) {
     cat("... ", nrow(x$results) - nrow(shown),
         " more taxa; see fit$results\n", sep = "")
   }
-  status_columns <- c("status_occupancy", "status_ecological", "status_joint")
-  if (any(as.matrix(x$results[, status_columns, drop = FALSE]) != "ok")) {
-    cat("Some tests were unavailable; see the status columns in fit$results.\n")
+  p_columns <- c("p_occupancy", "p_abundance", "p_joint")
+  if (anyNA(x$results[, p_columns, drop = FALSE])) {
+    cat("Unavailable tests are NA; see fit$details for more information.\n")
   }
   invisible(x)
 }
 
+#' @noRd
 #' @export
 as.data.frame.DORAM <- function(x, row.names = NULL, optional = FALSE, ...) {
   x$results

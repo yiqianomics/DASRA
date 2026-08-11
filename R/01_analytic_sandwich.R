@@ -1,24 +1,16 @@
-# DORAM-D3 analytic efficient-score/sandwich inference overlay.
+# Analytic sandwich inference for DORAM.
 #
-# This file intentionally does not modify the frozen count-native 0.7 source.
-# It consumes already projected subject-level score rows and supplies the next
-# candidate inference layer:
-#   * iid/random-design global centering;
-#   * independent-sampling-strata within-stratum centering;
-#   * HC0 empirical meat;
-#   * analytic chi-square upper-tail calibration.
-#
-# There is no bootstrap, multiplier, resampling seed, penalty, ridge,
-# pseudoinverse, rank reduction, or data-dependent calibration choice here.
+# Constructs endpoint and joint score tests from subject-level contributions
+# using empirical HC0 covariance estimation and chi-squared calibration.
 
 D3A_CONTRACT <- list(
-  schema = "doram-d3-asymptotic-sandwich-overlay-0.1.0",
+  schema = "doram-analytic-sandwich-1.0.0",
   primary_reference = "analytic_chisq",
   calibration_label = "asymptotic_empirical_sandwich_chisq",
   meat = "empirical_centered_hc0",
   condition_ratio_min = 1e-10,
   supported_dimensions = c(1L, 2L),
-  count_source_schema = "doram-d3-count-native-prototype-0.7.0"
+  count_source_schema = "doram-count-likelihood-1.0.0"
 )
 
 d3a_fail <- function(reason, stage, details = list()) {
@@ -448,7 +440,7 @@ d3a_fit_endpoints <- function(count_data, X, strata = NULL,
                               sampling_design = "iid_random_design",
                               integration_level = "production") {
   if (!d3a_count_source_is_compatible()) {
-    stop("frozen count-native 0.7 source is not loaded or is incompatible",
+    stop("the DORAM count-likelihood engine is unavailable or incompatible",
          call. = FALSE)
   }
   fit <- cn_fit_occupancy_null(

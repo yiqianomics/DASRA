@@ -3,6 +3,7 @@
 S3method(as.data.frame,DORAM)
 S3method(print,DORAM)
 export(DORAM)
+importFrom(Rcpp,evalCpp)
 importFrom(stats,
   constrOptim,
   dbinom,
@@ -19,3 +20,4 @@ importFrom(stats,
   uniroot
 )
 importFrom(utils,tail)
+useDynLib(DORAM, .registration = TRUE)

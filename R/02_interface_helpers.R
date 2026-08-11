@@ -1,8 +1,4 @@
-# Internal validation, alignment, fitting, and result helpers.
-#
-# The public interface is intentionally small. These helpers keep the user-
-# facing code readable while preserving the verified taxon-level likelihood
-# and analytic score construction without modification.
+# Input validation, sample alignment, taxon fitting, and result assembly.
 
 .doram_abort <- function(...) stop(..., call. = FALSE)
 
@@ -33,6 +29,69 @@
   if (!nzchar(reason)) reason <- .doram_text_scalar(x$reason)
   if (!nzchar(reason)) reason <- default
   reason
+}
+
+.doram_public_status <- function(x) {
+  gsub("ecological", "abundance", x, fixed = TRUE)
+}
+
+.doram_empty_boundary_rows <- function() {
+  data.frame(
+    taxon = character(), endpoint = character(), stage = character(),
+    parameter = character(), parameter_block = character(),
+    value = numeric(), side = character(), bound = numeric(),
+    distance = numeric(), active_limit = numeric(),
+    transformed_value = numeric(), stringsAsFactors = FALSE
+  )
+}
+
+.doram_boundary_rows <- function(taxon, fit, count_data) {
+  active <- as.character(fit$active_parameters)
+  if (!length(active) || is.null(fit$selected_index) ||
+      !length(fit$candidates)) return(.doram_empty_boundary_rows())
+  selected <- fit$candidates[[fit$selected_index]]
+  values <- selected$opt_par
+  if (is.null(values) || is.null(names(values))) {
+    return(.doram_empty_boundary_rows())
+  }
+  layout <- cn_layout(count_data)
+  bounds <- cn_opt_bounds(layout)
+  do.call(rbind, lapply(active, function(parameter) {
+    value <- values[[parameter]]
+    lower <- bounds$lower[[parameter]]
+    upper <- bounds$upper[[parameter]]
+    if (!all(is.finite(c(value, lower, upper)))) {
+      return(.doram_empty_boundary_rows())
+    }
+    side <- if (abs(value - lower) <= abs(upper - value)) "lower" else "upper"
+    limit <- if (side == "lower") lower else upper
+    block <- if (grepl("^alpha:", parameter)) {
+      "structural_absence"
+    } else if (identical(parameter, "zeta") || grepl("^beta:", parameter)) {
+      "present_location"
+    } else if (grepl("^log_sigma_g[01]$", parameter)) {
+      "present_scale"
+    } else {
+      "other"
+    }
+    data.frame(
+      taxon = taxon,
+      endpoint = "occupancy",
+      stage = .doram_text_scalar(fit$stage, "restricted_fit"),
+      parameter = parameter,
+      parameter_block = block,
+      value = as.numeric(value),
+      side = side,
+      bound = as.numeric(limit),
+      distance = as.numeric(abs(value - limit)),
+      active_limit = as.numeric(
+        CN_D3_CONTRACT$optimizer$boundary_relative_distance *
+          (1 + max(abs(lower), abs(upper)))
+      ),
+      transformed_value = if (block == "present_scale") exp(value) else NA_real_,
+      stringsAsFactors = FALSE
+    )
+  }))
 }
 
 .doram_counts_matrix <- function(counts) {
@@ -184,7 +243,7 @@
   names(depth) <- rownames(metadata)
   upper <- CN_D3_CONTRACT$integration$certified_library_size[["upper"]]
   if (any(depth > upper)) {
-    .doram_abort("library_size exceeds the certified count-likelihood envelope")
+    .doram_abort("library_size exceeds the supported numerical range")
   }
   if (any(apply(counts, 1L, max) > depth)) {
     .doram_abort("no taxon count may exceed its original library size")
@@ -345,7 +404,8 @@
     p_value = if (available) .doram_scalar(result$p_value) else NA_real_,
     log_p_value = if (available) .doram_log_scalar(result$log_p_value) else NA_real_,
     q_value = NA_real_,
-    status = if (available) "ok" else .doram_failure_reason(result),
+    status = if (available) "ok" else
+      .doram_public_status(.doram_failure_reason(result)),
     stringsAsFactors = FALSE
   )
 }
@@ -356,7 +416,8 @@
     taxon = taxon,
     endpoint = endpoint,
     available = available,
-    status = if (available) "ok" else .doram_failure_reason(result),
+    status = if (available) "ok" else
+      .doram_public_status(.doram_failure_reason(result)),
     max_leverage = .doram_scalar(result$max_leverage),
     score_ess = .doram_scalar(result$score_ess),
     condition_ratio = .doram_scalar(result$condition_ratio),
@@ -370,7 +431,7 @@
 }
 
 .doram_exception_fit <- function(taxon, n, message) {
-  rows <- do.call(rbind, lapply(c("occupancy", "ecological", "joint"), function(endpoint) {
+  rows <- do.call(rbind, lapply(c("occupancy", "abundance", "joint"), function(endpoint) {
     data.frame(
       taxon = taxon, endpoint = endpoint, available = FALSE,
       estimate = NA_real_, statistic = NA_real_, df = NA_integer_,
@@ -379,7 +440,7 @@
     )
   }))
   endpoint_diagnostics <- do.call(rbind, lapply(
-    c("occupancy", "ecological", "joint"),
+    c("occupancy", "abundance", "joint"),
     function(endpoint) data.frame(
       taxon = taxon, endpoint = endpoint, available = FALSE,
       status = "taxon_fit_exception", max_leverage = NA_real_,
@@ -404,7 +465,8 @@
       delta_null_constraint = 0,
       stringsAsFactors = FALSE
     ),
-    endpoint_diagnostics = endpoint_diagnostics
+    endpoint_diagnostics = endpoint_diagnostics,
+    boundary_diagnostics = .doram_empty_boundary_rows()
   )
 }
 
@@ -431,7 +493,7 @@
     return(.doram_exception_fit(taxon, length(y), conditionMessage(endpoints)))
   }
 
-  ecological_estimate <- if (isTRUE(endpoints$ecological_rows$available)) {
+  abundance_estimate <- if (isTRUE(endpoints$ecological_rows$available)) {
     .doram_scalar(endpoints$ecological_rows$beta_hat)
   } else {
     NA_real_
@@ -439,14 +501,14 @@
   rows <- rbind(
     .doram_endpoint_row(endpoints$occupancy, taxon, "occupancy"),
     .doram_endpoint_row(
-      endpoints$ecological, taxon, "ecological",
-      estimate = ecological_estimate
+      endpoints$ecological, taxon, "abundance",
+      estimate = abundance_estimate
     ),
     .doram_endpoint_row(endpoints$joint, taxon, "joint")
   )
   endpoint_diagnostics <- rbind(
     .doram_endpoint_diagnostic(endpoints$occupancy, taxon, "occupancy"),
-    .doram_endpoint_diagnostic(endpoints$ecological, taxon, "ecological"),
+    .doram_endpoint_diagnostic(endpoints$ecological, taxon, "abundance"),
     .doram_endpoint_diagnostic(endpoints$joint, taxon, "joint")
   )
 
@@ -457,7 +519,13 @@
     rho_null <- as.numeric(endpoints$fit$evaluation$rho)
   }
   projected_available <- isTRUE(endpoints$occupancy_projected$available)
-  fit_status <- if (fit_available) "ok" else .doram_failure_reason(endpoints$fit)
+  fit_status <- if (fit_available) "ok" else
+    .doram_public_status(.doram_failure_reason(endpoints$fit))
+  boundary_diagnostics <- if (fit_available) {
+    .doram_empty_boundary_rows()
+  } else {
+    .doram_boundary_rows(taxon, endpoints$fit, count_data)
+  }
   fit_diagnostic <- data.frame(
     taxon = taxon,
     available = fit_available,
@@ -492,12 +560,13 @@
     gamma_null = gamma_null,
     rho_null = rho_null,
     fit_diagnostic = fit_diagnostic,
-    endpoint_diagnostics = endpoint_diagnostics
+    endpoint_diagnostics = endpoint_diagnostics,
+    boundary_diagnostics = boundary_diagnostics
   )
 }
 
 .doram_adjust_results <- function(results) {
-  for (endpoint in c("occupancy", "ecological", "joint")) {
+  for (endpoint in c("occupancy", "abundance", "joint")) {
     index <- which(results$endpoint == endpoint)
     results$q_value[index] <- stats::p.adjust(
       results$p_value[index], method = "BH", n = length(index)
@@ -506,26 +575,22 @@
   results
 }
 
-.doram_primary_results <- function(tests, taxa) {
+.doram_primary_results <- function(details, taxa) {
   take <- function(endpoint) {
-    x <- tests[tests$endpoint == endpoint, , drop = FALSE]
+    x <- details[details$endpoint == endpoint, , drop = FALSE]
     x[match(taxa, x$taxon), , drop = FALSE]
   }
   occupancy <- take("occupancy")
-  ecological <- take("ecological")
+  abundance <- take("abundance")
   joint <- take("joint")
   data.frame(
     taxon = taxa,
     p_occupancy = occupancy$p_value,
     q_occupancy = occupancy$q_value,
-    status_occupancy = occupancy$status,
-    ecological_difference = ecological$estimate,
-    p_ecological = ecological$p_value,
-    q_ecological = ecological$q_value,
-    status_ecological = ecological$status,
+    p_abundance = abundance$p_value,
+    q_abundance = abundance$q_value,
     p_joint = joint$p_value,
     q_joint = joint$q_value,
-    status_joint = joint$status,
     stringsAsFactors = FALSE
   )
 }

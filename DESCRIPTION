@@ -1,6 +1,6 @@
 Package: DORAM
 Type: Package
-Title: Depth-Aware Structural-Absence and Zero-Inclusive Ecological Abundance Testing
+Title: Depth-Aware Occupancy and Zero-Inclusive Abundance Testing
 Version: 0.8.0
 Authors@R: c(
     person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
@@ -12,11 +12,9 @@ Description: Implements taxonwise inference for a depth-aware zero-inflated
     binomial-logistic-normal model for microbiome count data. The package uses
     a restricted nuisance-projected score to test equality of the latent
     structural-absence probability (equivalently, equality of occupancy), an
-    all-sample zero-inclusive read-relative ecological abundance contrast, and
-    a covariance-aware two-degree-of-freedom joint null. Inference uses
-    analytic empirical-sandwich chi-squared calibration without bootstrap or
-    multiplier resampling, pseudocounts, zero removal, or positive-count-only
-    preprocessing.
+    all-sample zero-inclusive read-relative abundance contrast, and a
+    covariance-aware two-degree-of-freedom joint null. Inference uses analytic
+    score statistics with empirical sandwich covariance estimation.
 License: GPL (>= 3)
 Encoding: UTF-8
 Depends:
@@ -24,17 +22,22 @@ Depends:
 Imports:
     numDeriv,
     parallel,
+    Rcpp,
     statmod,
     stats,
     utils
+LinkingTo:
+    Rcpp
 Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
 Collate:
+    'RcppExports.R'
     '00_count_native.R'
+    '00a_compiled_quadrature.R'
     '01_analytic_sandwich.R'
     '02_interface_helpers.R'
     'DORAM.R'
-NeedsCompilation: no
+NeedsCompilation: yes
 Config/roxygen2/version: 8.1.0

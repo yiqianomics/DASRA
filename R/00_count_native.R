@@ -1,9 +1,8 @@
-# Standalone DORAM-D3 count-native prototype.
+# Count-likelihood engine for DORAM.
 #
-# This file is deliberately independent of the installed dash package and of
-# the frozen D1/D2 verification code.  It implements only the taxonwise
-# zero-inflated binomial-logistic-normal likelihood and the restricted
-# occupancy score H0: delta = 0, with zeta and kappa left unrestricted.
+# Implements the taxonwise zero-inflated binomial-logistic-normal likelihood
+# and the restricted occupancy score model. Present-component group location
+# and scale effects remain unrestricted nuisance parameters.
 
 if (!requireNamespace("statmod", quietly = TRUE)) {
   stop("count_native.R requires the statmod package", call. = FALSE)
@@ -13,7 +12,7 @@ if (!requireNamespace("numDeriv", quietly = TRUE)) {
 }
 
 CN_D3_CONTRACT <- list(
-  schema_version = "doram-d3-count-native-prototype-0.7.0",
+  schema_version = "doram-count-likelihood-1.0.0",
   integration = list(
     engine = "mode_centered_vector_gk15",
     production_relative_tolerance = 1e-8,
@@ -86,8 +85,6 @@ cn_failure <- function(code, ..., stage = NA_character_) {
     c(list(
       available = FALSE,
       p_value = NA_real_,
-      p_multiplier = NA_real_,
-      p_chisq = NA_real_,
       statistic = NA_real_,
       failure_code = as.character(code),
       reason = as.character(code),
@@ -252,7 +249,7 @@ cn_eta_envelope_check <- function(eta) {
 cn_eta_envelope_condition <- function(check) {
   structure(
     list(
-      message = "present-location predictor is outside the certified envelope",
+      message = "present-location predictor is outside the supported numerical range",
       call = NULL,
       fitted_eta_range = check$fitted_range,
       certified_eta_predictor = check$envelope
@@ -487,7 +484,7 @@ cn_integrated_present <- function(
   if (length(y) != 1L || !is.finite(y) || y < 0 || y != round(y) ||
       y > N || length(sigma) != 1L || !is.finite(sigma) || sigma <= 0 ||
       !isTRUE(library_envelope$ok) || !isTRUE(eta_envelope$ok)) {
-    cn_stop("integration inputs are outside the certified numerical envelope")
+    cn_stop("integration inputs are outside the supported numerical range")
   }
   control <- cn_integration_control(level)
   mode <- cn_posterior_mode(y, N, eta, sigma)
@@ -688,7 +685,7 @@ cn_observation_eval <- function(
     y, N, nu, eta, sigma,
     integration_level = c("production", "audit")) {
   integration_level <- match.arg(integration_level)
-  present <- cn_integrated_present(
+  present <- cn_integrated_present_compiled(
     y, N, eta, sigma, level = integration_level
   )
   log_rho <- -cn_softplus(-nu)
@@ -977,7 +974,7 @@ cn_precheck <- function(data) {
   add <- function(code) failures <<- unique(c(failures, code))
   library_envelope <- cn_library_envelope_check(data$N)
   if (!isTRUE(library_envelope$ok)) {
-    add("library_size_outside_certified_envelope")
+    add("library_size_outside_supported_range")
   }
   if (length(unique(data$g)) != 2L) add("both_groups_required")
   if (cn_rank(data$Xrho) < ncol(data$Xrho)) add("structural_design_rank")
@@ -1855,8 +1852,13 @@ cn_fit_occupancy_null <- function(
   penalty_evaluations <- 0L
   fit_one <- function(start) {
     eta_trial_violations <- list()
+    cached_theta <- NULL
+    cached_evaluation <- NULL
     evaluate <- function(theta) {
-      tryCatch(
+      if (!is.null(cached_theta) && identical(theta, cached_theta)) {
+        return(cached_evaluation)
+      }
+      evaluation <- tryCatch(
         cn_eval(theta, data, integration_level = integration_level),
         cn_eta_envelope_error = function(e) {
           eta_trial_violations[[length(eta_trial_violations) + 1L]] <<-
@@ -1868,6 +1870,11 @@ cn_fit_occupancy_null <- function(
         },
         error = function(e) e
       )
+      if (!inherits(evaluation, "error")) {
+        cached_theta <<- theta
+        cached_evaluation <<- evaluation
+      }
+      evaluation
     }
     objective <- function(par, ...) {
       theta <- cn_opt_to_natural(setNames(par, layout$opt_names), layout)
@@ -2021,7 +2028,7 @@ cn_fit_occupancy_null <- function(
   if (inherits(evaluation, "error")) {
     if (inherits(evaluation, "cn_eta_envelope_error")) {
       return(cn_failure(
-        "present_location_predictor_outside_certified_envelope",
+        "present_location_predictor_outside_supported_range",
         fitted_eta_range = evaluation$fitted_eta_range,
         certified_eta_predictor = evaluation$certified_eta_predictor,
         candidates = candidates, selected_index = selected_index,
@@ -2038,7 +2045,7 @@ cn_fit_occupancy_null <- function(
   eta_envelope <- cn_eta_envelope_check(evaluation$eta)
   if (!isTRUE(eta_envelope$ok)) {
     return(cn_failure(
-      "present_location_predictor_outside_certified_envelope",
+      "present_location_predictor_outside_supported_range",
       fitted_eta_range = eta_envelope$fitted_range,
       certified_eta_predictor = eta_envelope$envelope,
       candidates = candidates, selected_index = selected_index,
@@ -2110,7 +2117,7 @@ cn_fit_occupancy_null <- function(
   }
   # This is the original likelihood score, not the constrOptim barrier
   # gradient.  Together with inactive constraints it ensures that a formed
-  # solution is an interior stationary point of the unchanged D3 model.
+  # solution is an interior stationary point of the fitted likelihood.
   nuisance_names <- setdiff(layout$natural_names, "delta")
   stationarity_result <- cn_relative_stationarity(
     evaluation$score, nuisance_names
@@ -2327,4 +2334,3 @@ cn_project_occupancy_score <- function(
     fit = fit
   ), class = c("cn_d3_projected_score", "list"))
 }
-

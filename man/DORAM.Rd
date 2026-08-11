@@ -2,7 +2,7 @@
 % Please edit documentation in R/DORAM.R
 \name{DORAM}
 \alias{DORAM}
-\title{Test latent occupancy and zero-inclusive ecological abundance}
+\title{Test latent occupancy and zero-inclusive abundance}
 \usage{
 DORAM(
   counts,
@@ -55,25 +55,33 @@ Windows runs serially and warns when a value greater than 1 is supplied.}
 \code{FALSE}.}
 }
 \value{
-An object of class \code{DORAM}. Its main component, \code{results}, contains
-one row per taxon with raw p-values, BH-adjusted q-values, endpoint status,
-and the ecological difference (comparison minus reference). The \code{tests}
-component contains the corresponding statistics and degrees of freedom.
-\code{descriptives}, \code{diagnostics}, and restricted-null posterior matrices are
-retained for inspection but are not printed by default.
+An object of class \code{DORAM} with the following components:
+\itemize{
+\item \code{results}: one row per taxon with occupancy, abundance, and joint p- and
+BH-adjusted q-values.
+\item \code{details}: long-form estimates, test statistics, degrees of freedom,
+p-values, q-values, and endpoint availability.
+\item \code{descriptives}: taxon-level zero counts, positive counts, and group means.
+\item \code{diagnostics}: fit, endpoint, and parameter-boundary diagnostics.
+\item \code{posterior}: restricted-null \code{rho_null}, \code{gamma_null}, and \code{tau_null}
+matrices.
+\item \code{contrast}: reference and comparison group labels.
+\item \code{sample_id} and \code{taxa}: analyzed sample and taxon identifiers.
+\item \code{settings}: input-column, covariate-coding, multiplicity, and parallel
+settings.
+\item \code{call}: the matched function call.
+}
 }
 \description{
-\code{DORAM()} tests two ecological endpoints for every selected taxon. The
+\code{DORAM()} tests two endpoints for every selected taxon. The
 occupancy endpoint concerns latent structural absence rather than observed
-zero/nonzero prevalence. The ecological endpoint compares the read-relative
+zero/nonzero prevalence. The abundance endpoint compares the read-relative
 abundance \code{Y/N} across all samples, including zeros. A covariance-aware
 two-degree-of-freedom joint test evaluates whether either endpoint changes.
 
 The function uses raw counts and the original sequencing depth directly. It
-does not normalize counts, add pseudocounts, remove zeros, automatically
-filter taxa, or use resampling. Tests that cannot be calibrated safely are
-returned as unavailable rather than being retried with a different
-procedure.
+does not normalize counts, add pseudocounts, remove zeros, or automatically
+filter taxa.
 }
 \details{
 The occupancy statistic is a nuisance-projected score test fitted under the
@@ -84,13 +92,13 @@ Therefore, \code{posterior$gamma_null}, \code{posterior$rho_null}, and
 null; they are not posterior predictions from an unrestricted group-effect
 model. DORAM does not report an occupancy odds ratio or confidence interval.
 
-The ecological difference is the adjusted comparison-minus-reference
+The abundance estimate in \code{details} is the adjusted comparison-minus-reference
 coefficient for all-sample \code{Y/N}. It is read-relative, not absolute
 abundance, and no compositional-closure correction is performed. The joint
 statistic uses the estimated cross-endpoint covariance; it is not a
 combination of two marginal p-values.
 
-Multiplicity adjustment is performed separately for occupancy, ecological,
+Multiplicity adjustment is performed separately for occupancy, abundance,
 and joint tests with the Benjamini--Hochberg procedure. Every selected taxon
 remains in its family denominator. An unavailable test retains \code{NA} for its
 p- and q-values and is not a discovery.
@@ -133,7 +141,7 @@ count_table <- t(vapply(seq_len(n), function(i) {
   as.integer(rmultinom(1, reads[i], probabilities)[1:3, 1])
 }, integer(3)))
 colnames(count_table) <- c(
-  "joint_signal", "ecological_signal", "null_taxon"
+  "joint_signal", "abundance_signal", "null_taxon"
 )
 rownames(count_table) <- sample_id
 sample_data <- data.frame(
@@ -158,7 +166,7 @@ fit <- DORAM(
 )
 fit
 fit$results
-fit$tests[, c(
+fit$details[, c(
   "taxon", "endpoint", "available", "p_value", "q_value", "status"
 )]
 }
