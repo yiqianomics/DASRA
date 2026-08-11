@@ -8,9 +8,10 @@
 #' two-degree-of-freedom joint test evaluates whether either endpoint changes.
 #'
 #' The function uses raw counts and the original sequencing depth directly. It
-#' does not normalize counts, add pseudocounts, remove zeros, filter taxa, or
-#' use resampling. Tests that cannot be calibrated safely are returned as
-#' unavailable rather than being retried with a different procedure.
+#' does not normalize counts, add pseudocounts, remove zeros, automatically
+#' filter taxa, or use resampling. Tests that cannot be calibrated safely are
+#' returned as unavailable rather than being retried with a different
+#' procedure.
 #'
 #' @param counts A numeric matrix or data frame with samples in rows and taxa
 #'   in columns. Entries must be finite nonnegative integers. Unique sample row
@@ -36,7 +37,8 @@
 #'   The default tests every taxon. This selection defines each BH family but
 #'   never changes the supplied original library sizes.
 #' @param cores Positive integer number of taxa to fit in parallel. The default
-#'   is 1.
+#'   is 1. Parallel taxon fitting uses process forking on non-Windows systems;
+#'   Windows runs serially and warns when a value greater than 1 is supplied.
 #' @param verbose If `TRUE`, print taxon-level progress. The default is
 #'   `FALSE`.
 #'
@@ -68,34 +70,71 @@
 #' p- and q-values and is not a discovery.
 #'
 #' @examples
-#' \dontrun{
-#' set.seed(1)
-#' n <- 120
+#' set.seed(20260810)
+#' n <- 180L
 #' sample_id <- sprintf("sample_%03d", seq_len(n))
-#' reads <- round(exp(rnorm(n, log(5000), 0.35)))
-#' diagnosis <- rep(c("control", "case"), each = n / 2)
-#' age <- round(rnorm(n, 50, 12))
-#' sex <- factor(rep(c("female", "male"), length.out = n))
+#' group <- rbinom(n, 1L, 0.5)
+#' age_z <- rnorm(n)
+#' reads <- pmax(1500L, round(exp(rnorm(n, log(8000), 0.35))))
 #'
-#' structural <- rbinom(n, 1, plogis(-0.8 + 0.01 * age))
-#' probability <- plogis(-7 + 0.35 * (diagnosis == "case"))
-#' y <- ifelse(structural == 1, 0, rbinom(n, reads, probability))
-#' count_table <- cbind(focal_taxon = y)
+#' # The first taxon has a structural-absence group effect, the second has a
+#' # conditional-present abundance effect, and the third is a null taxon.
+#' alpha0 <- c(-1.6, -1.2, -1.4)
+#' alpha_z <- c(0.25, -0.15, 0.15)
+#' delta <- c(2, 0, 0)
+#' beta0 <- c(-6.2, -6.5, -6.3)
+#' beta_z <- c(0.15, 0.20, -0.10)
+#' zeta <- c(0, 0.65, 0)
+#' sigma <- c(0.65, 0.70, 0.75)
+#'
+#' rho <- sapply(seq_len(3), function(j) {
+#'   plogis(alpha0[j] + alpha_z[j] * age_z + delta[j] * group)
+#' })
+#' structural <- matrix(rbinom(n * 3, 1L, as.vector(rho)), n, 3)
+#' latent_abundance <- sapply(seq_len(3), function(j) {
+#'   rnorm(n, beta0[j] + beta_z[j] * age_z + zeta[j] * group, sigma[j])
+#' })
+#' taxon_probability <- plogis(latent_abundance) * (1 - structural)
+#' stopifnot(max(rowSums(taxon_probability)) < 1)
+#'
+#' # Draw the three focal taxa jointly and leave the remaining probability
+#' # mass as an implicit background community.
+#' count_table <- t(vapply(seq_len(n), function(i) {
+#'   probabilities <- c(
+#'     taxon_probability[i, ],
+#'     1 - sum(taxon_probability[i, ])
+#'   )
+#'   as.integer(rmultinom(1, reads[i], probabilities)[1:3, 1])
+#' }, integer(3)))
+#' colnames(count_table) <- c(
+#'   "joint_signal", "ecological_signal", "null_taxon"
+#' )
 #' rownames(count_table) <- sample_id
 #' sample_data <- data.frame(
-#'   diagnosis = diagnosis, reads = reads, age = age, sex = sex,
+#'   diagnosis = factor(
+#'     ifelse(group == 0, "control", "case"),
+#'     levels = c("control", "case")
+#'   ),
+#'   reads = reads,
+#'   age_z = age_z,
 #'   row.names = sample_id
 #' )
 #'
+#' \dontrun{
 #' fit <- DORAM(
 #'   counts = count_table,
 #'   metadata = sample_data,
 #'   group = "diagnosis",
 #'   reference = "control",
 #'   library_size = "reads",
-#'   covariates = c("age", "sex")
+#'   covariates = "age_z",
+#'   cores = 3L
 #' )
+#' fit
 #' fit$results
+#' fit$tests[, c(
+#'   "taxon", "endpoint", "available", "p_value", "q_value", "status"
+#' )]
 #' }
 #'
 #' @importFrom stats constrOptim dbinom dnorm integrate lm.fit median pchisq

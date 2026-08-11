@@ -13,7 +13,8 @@ pseudocounts, discard zeros, or use resampling calibration.
 ## Installation
 
 ```r
-remotes::install_github("yiqianomics/DORAM")
+devtools::document("path/to/DORAM")
+devtools::install("path/to/DORAM")
 library(DORAM)
 ```
 
@@ -102,7 +103,9 @@ sizes.
 
 ## Results
 
-`fit$results` contains one row per taxon:
+`fit$results` contains one row per analyzed taxon. By default, a one-column
+count table produces one result row and a three-column table produces three
+rows; supplying `taxa` restricts the output to the selected columns:
 
 | Column | Meaning |
 |---|---|
