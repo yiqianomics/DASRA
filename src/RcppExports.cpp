@@ -10,53 +10,81 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// doram_gk15_panel_cpp
-Rcpp::List doram_gk15_panel_cpp(const double a, const double b, const double y, const double N, const double eta, const double sigma, const double mode, const double p_mode, const double mode_residual);
-RcppExport SEXP _DORAM_doram_gk15_panel_cpp(SEXP aSEXP, SEXP bSEXP, SEXP ySEXP, SEXP NSEXP, SEXP etaSEXP, SEXP sigmaSEXP, SEXP modeSEXP, SEXP p_modeSEXP, SEXP mode_residualSEXP) {
+// dasra_gh_log_weights_cpp
+Rcpp::NumericVector dasra_gh_log_weights_cpp(const Rcpp::NumericVector& node, const int order);
+RcppExport SEXP _DASRA_dasra_gh_log_weights_cpp(SEXP nodeSEXP, SEXP orderSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
-    Rcpp::traits::input_parameter< const double >::type a(aSEXP);
-    Rcpp::traits::input_parameter< const double >::type b(bSEXP);
-    Rcpp::traits::input_parameter< const double >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const double >::type N(NSEXP);
-    Rcpp::traits::input_parameter< const double >::type eta(etaSEXP);
-    Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
-    Rcpp::traits::input_parameter< const double >::type mode(modeSEXP);
-    Rcpp::traits::input_parameter< const double >::type p_mode(p_modeSEXP);
-    Rcpp::traits::input_parameter< const double >::type mode_residual(mode_residualSEXP);
-    rcpp_result_gen = Rcpp::wrap(doram_gk15_panel_cpp(a, b, y, N, eta, sigma, mode, p_mode, mode_residual));
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type node(nodeSEXP);
+    Rcpp::traits::input_parameter< const int >::type order(orderSEXP);
+    rcpp_result_gen = Rcpp::wrap(dasra_gh_log_weights_cpp(node, order));
     return rcpp_result_gen;
 END_RCPP
 }
-// doram_integrate_moments_cpp
-Rcpp::List doram_integrate_moments_cpp(const double y, const double N, const double eta, const double sigma, const double mode, const double p_mode, const double mode_residual, const double local_scale, const double relative_tolerance, const double radius, const int maximum_panels, Rcpp::NumericVector tail_error);
-RcppExport SEXP _DORAM_doram_integrate_moments_cpp(SEXP ySEXP, SEXP NSEXP, SEXP etaSEXP, SEXP sigmaSEXP, SEXP modeSEXP, SEXP p_modeSEXP, SEXP mode_residualSEXP, SEXP local_scaleSEXP, SEXP relative_toleranceSEXP, SEXP radiusSEXP, SEXP maximum_panelsSEXP, SEXP tail_errorSEXP) {
+// dasra_count_log_hy_adaptive_cpp
+Rcpp::NumericVector dasra_count_log_hy_adaptive_cpp(const Rcpp::NumericVector& y, const Rcpp::NumericVector& N, const Rcpp::NumericVector& eta, const double sigma, const Rcpp::NumericVector& node, const Rcpp::NumericVector& log_raw_weight, const int iterations, const double score_tolerance, const double bracket_tolerance);
+RcppExport SEXP _DASRA_dasra_count_log_hy_adaptive_cpp(SEXP ySEXP, SEXP NSEXP, SEXP etaSEXP, SEXP sigmaSEXP, SEXP nodeSEXP, SEXP log_raw_weightSEXP, SEXP iterationsSEXP, SEXP score_toleranceSEXP, SEXP bracket_toleranceSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
-    Rcpp::traits::input_parameter< const double >::type y(ySEXP);
-    Rcpp::traits::input_parameter< const double >::type N(NSEXP);
-    Rcpp::traits::input_parameter< const double >::type eta(etaSEXP);
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type N(NSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type eta(etaSEXP);
     Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
-    Rcpp::traits::input_parameter< const double >::type mode(modeSEXP);
-    Rcpp::traits::input_parameter< const double >::type p_mode(p_modeSEXP);
-    Rcpp::traits::input_parameter< const double >::type mode_residual(mode_residualSEXP);
-    Rcpp::traits::input_parameter< const double >::type local_scale(local_scaleSEXP);
-    Rcpp::traits::input_parameter< const double >::type relative_tolerance(relative_toleranceSEXP);
-    Rcpp::traits::input_parameter< const double >::type radius(radiusSEXP);
-    Rcpp::traits::input_parameter< const int >::type maximum_panels(maximum_panelsSEXP);
-    Rcpp::traits::input_parameter< Rcpp::NumericVector >::type tail_error(tail_errorSEXP);
-    rcpp_result_gen = Rcpp::wrap(doram_integrate_moments_cpp(y, N, eta, sigma, mode, p_mode, mode_residual, local_scale, relative_tolerance, radius, maximum_panels, tail_error));
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type node(nodeSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type log_raw_weight(log_raw_weightSEXP);
+    Rcpp::traits::input_parameter< const int >::type iterations(iterationsSEXP);
+    Rcpp::traits::input_parameter< const double >::type score_tolerance(score_toleranceSEXP);
+    Rcpp::traits::input_parameter< const double >::type bracket_tolerance(bracket_toleranceSEXP);
+    rcpp_result_gen = Rcpp::wrap(dasra_count_log_hy_adaptive_cpp(y, N, eta, sigma, node, log_raw_weight, iterations, score_tolerance, bracket_tolerance));
+    return rcpp_result_gen;
+END_RCPP
+}
+// dasra_count_moments_adaptive_cpp
+Rcpp::List dasra_count_moments_adaptive_cpp(const Rcpp::NumericVector& y, const Rcpp::NumericVector& N, const Rcpp::NumericVector& eta, const double sigma, const Rcpp::NumericVector& node, const Rcpp::NumericVector& log_raw_weight, const bool need_moments, const int iterations, const double score_tolerance, const double bracket_tolerance);
+RcppExport SEXP _DASRA_dasra_count_moments_adaptive_cpp(SEXP ySEXP, SEXP NSEXP, SEXP etaSEXP, SEXP sigmaSEXP, SEXP nodeSEXP, SEXP log_raw_weightSEXP, SEXP need_momentsSEXP, SEXP iterationsSEXP, SEXP score_toleranceSEXP, SEXP bracket_toleranceSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type y(ySEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type N(NSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type eta(etaSEXP);
+    Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type node(nodeSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type log_raw_weight(log_raw_weightSEXP);
+    Rcpp::traits::input_parameter< const bool >::type need_moments(need_momentsSEXP);
+    Rcpp::traits::input_parameter< const int >::type iterations(iterationsSEXP);
+    Rcpp::traits::input_parameter< const double >::type score_tolerance(score_toleranceSEXP);
+    Rcpp::traits::input_parameter< const double >::type bracket_tolerance(bracket_toleranceSEXP);
+    rcpp_result_gen = Rcpp::wrap(dasra_count_moments_adaptive_cpp(y, N, eta, sigma, node, log_raw_weight, need_moments, iterations, score_tolerance, bracket_tolerance));
+    return rcpp_result_gen;
+END_RCPP
+}
+// dasra_mean_log_relative_cpp
+Rcpp::NumericVector dasra_mean_log_relative_cpp(const Rcpp::NumericVector& location, const double sigma, const Rcpp::NumericVector& z, const Rcpp::NumericVector& weight);
+RcppExport SEXP _DASRA_dasra_mean_log_relative_cpp(SEXP locationSEXP, SEXP sigmaSEXP, SEXP zSEXP, SEXP weightSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type location(locationSEXP);
+    Rcpp::traits::input_parameter< const double >::type sigma(sigmaSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type z(zSEXP);
+    Rcpp::traits::input_parameter< const Rcpp::NumericVector& >::type weight(weightSEXP);
+    rcpp_result_gen = Rcpp::wrap(dasra_mean_log_relative_cpp(location, sigma, z, weight));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_DORAM_doram_gk15_panel_cpp", (DL_FUNC) &_DORAM_doram_gk15_panel_cpp, 9},
-    {"_DORAM_doram_integrate_moments_cpp", (DL_FUNC) &_DORAM_doram_integrate_moments_cpp, 12},
+    {"_DASRA_dasra_gh_log_weights_cpp", (DL_FUNC) &_DASRA_dasra_gh_log_weights_cpp, 2},
+    {"_DASRA_dasra_count_log_hy_adaptive_cpp", (DL_FUNC) &_DASRA_dasra_count_log_hy_adaptive_cpp, 9},
+    {"_DASRA_dasra_count_moments_adaptive_cpp", (DL_FUNC) &_DASRA_dasra_count_moments_adaptive_cpp, 10},
+    {"_DASRA_dasra_mean_log_relative_cpp", (DL_FUNC) &_DASRA_dasra_mean_log_relative_cpp, 4},
     {NULL, NULL, 0}
 };
 
-RcppExport void R_init_DORAM(DllInfo *dll) {
+RcppExport void R_init_DASRA(DllInfo *dll) {
     R_registerRoutines(dll, NULL, CallEntries, NULL, NULL);
     R_useDynamicSymbols(dll, FALSE);
 }

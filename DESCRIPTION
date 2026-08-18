@@ -1,43 +1,34 @@
-Package: DORAM
+Package: DASRA
 Type: Package
-Title: Depth-Aware Occupancy and Zero-Inclusive Abundance Testing
-Version: 0.8.0
-Authors@R: c(
-    person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
-           role = c("aut", "cre")),
-    person("Zihan", "Zhu", email = "zihan.zhu@yale.edu",
-           role = "aut")
+Title: Depth-Aware Structural-Absence and Relative-Abundance Analysis
+Version: 0.3.0
+Authors@R:
+    c(
+        person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
+               role = c("aut", "cre")),
+        person("Zihan", "Zhu", email = "zihan.zhu@yale.edu",
+               role = "aut")
     )
-Description: Implements taxonwise inference for a depth-aware zero-inflated
-    binomial-logistic-normal model for microbiome count data. The package uses
-    a restricted nuisance-projected score to test equality of the latent
-    structural-absence probability (equivalently, equality of occupancy), an
-    all-sample zero-inclusive read-relative abundance contrast, and a
-    covariance-aware two-degree-of-freedom joint null. Inference uses analytic
-    score statistics with empirical sandwich covariance estimation.
+Description: Provides depth-aware taxon-level inference for microbiome count
+    data. The method separates group differences in structural-absence
+    probability from differences in relative abundance conditional on taxon
+    presence, accounts for finite-depth nondetection through a latent-state
+    count model, and corrects the abundance component for a shared
+    compositional background across taxa.
 License: GPL (>= 3)
 Encoding: UTF-8
-Depends:
-    R (>= 4.2.0)
+Depends: R (>= 4.1.0)
 Imports:
-    numDeriv,
-    parallel,
+    nleqslv,
     Rcpp,
     statmod,
-    stats,
-    utils
+    stats
 LinkingTo:
     Rcpp
 Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Roxygen: list(markdown = TRUE)
-Collate:
-    'RcppExports.R'
-    '00_count_native.R'
-    '00a_compiled_quadrature.R'
-    '01_analytic_sandwich.R'
-    '02_interface_helpers.R'
-    'DORAM.R'
 NeedsCompilation: yes
+SystemRequirements: C++11
 Config/roxygen2/version: 8.1.0
