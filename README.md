@@ -14,15 +14,7 @@ From the package source directory:
 
 ```r
 install.packages(c("Rcpp", "nleqslv", "statmod"))
-devtools::install()
-```
-
-For development checks:
-
-```r
-devtools::document()
-devtools::test()
-devtools::check()
+remotes::install_github("yiqianomics/DASRA")
 ```
 
 ## Input
