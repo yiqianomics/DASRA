@@ -1,0 +1,482 @@
+CHANGES IN VERSION 3.13.0
+-------------------------
+
+BUG CORRECTION
+
+    o (3.13.1) merged @votti PR for not checking connection if localhub is selected
+
+NEW FEATURES
+
+    o (3.13.2) Add auto clean of cache if corrupt index file
+    o (3.13.3) Add auto redownload once if resource is not loading in R, if localHub
+    is not selected and internet available. 
+
+CHANGES IN VERSION 3.11.0
+-------------------------
+
+BUG CORRECTION
+
+    o (3.11.4) Correct subsetting. Didn't account for multiple files associated
+    with single entry (ie. bam/bai).
+
+CHANGES IN VERSION 3.9.0
+-------------------------
+
+NEW FEATURES
+
+    o (3.9.1) Remove the defunct `display` method for AnnotationHub.
+    o (3.9.1) Rename vignette from TroubleshootingTheCache to TroubleshootingTheHubs
+    
+CHANGES IN VERSION 3.7.0
+-------------------------
+
+NEW FEATURES
+
+     o (3.7.4) Suppress snapshot date unless interactive session 
+     o (3.7.1) Add DispatchClass for keras model weights
+
+DEPRECATED
+
+    o (3.7.2) Deprecate display in favor of BiocHubsShiny; see vignette
+
+
+CHANGES IN VERSION 3.5.0
+-------------------------
+
+NEW FEATURES
+
+    o (3.5.2) Add dcf dispatchclass
+    o (3.5.1) Add CompDb dispatchclass
+
+
+CHANGES IN VERSION 3.3.0
+-------------------------
+
+NEW FEATURES
+
+    o (3.3.6) Serialized S4 hub resources (AnnotationHub and ExperimentHub)
+      are now passed thru updateObject() at load-time
+
+USER-VISIBLE MODIFICATIONS
+
+    o (3.3.8) Add instructions for creating a hub shared across multiple users
+    o (3.3.2) Remove TESTING option as only needed to expose devel orgdb
+    o (3.3.2) Change filter for orgdbs. orgdbs at release time will be stamped
+    with devel (to be release) and then manually have biocversion added for the
+    upcoming new devel. Filtering then based on biocversion number. This will
+    expose devel orgdbs as soon as generated
+    
+BUG CORRECTION
+
+    o (3.1.9) Fix broken test. Identical not appropriate. all present appropriate
+    
+CHANGES IN VERSION 3.1.0
+-------------------------
+
+MAJOR UPDATES
+
+    o (3.1.2) In accordance with the deprecated caching location, upgraded to
+    error/defunct from warning/deprecated in preparaion for removal of
+    dependency next release
+
+
+USER-VISIBLE MODIFICATIONS
+
+    o (3.1.1) If there is a duplicate entry in the hub cache for a resource, hub
+    code will no longer produce an ERROR. If the duplicate resource was not
+    requested the duplicate is ignored. If the duplicate resource is requested,
+    produce a warning for corrupt cache and continue with first found entry.
+    o (3.1.3) Fix typo in message display 
+    o (3.1.5) Deprecate the `display,Hub-method`
+
+BUG CORRECTION
+
+    o (3.1.7) Fix ERROR message for out-dated orgDbs 
+
+
+CHANGES IN VERSION 2.99.0
+-------------------------
+
+MAJOR UPDATES
+
+    o (2.99.0) The default caching location has changed. Instead of
+    rappdirs::user_cache_dir using tools::R_user_dir. To avoid conflicting
+    caches, a user will have to manage an old cache location before
+    proceeding. Information for handling an old cache location is provided in
+    the vignette.
+    o (2.99.0) Another major change, a default caching location is automatically
+    created in a non interactive session instead of using a temporary
+    location. In an interactive session, a user is still prompted for
+    permission.
+
+CHANGES IN VERSION 2.23.0
+-------------------------
+
+USER-VISIBLE MODIFICATIONS
+
+    o (2.23.2) Create a new all encompassing vignette that references both
+    ExpeirmentHub and AnnotationHub. Reference this one vignette in all four
+    related packages instead of trying to maintain multiple vigenttes that were
+    essentially the same. This also involves removing CreateAnAnnotationPackage
+    
+MODIFICATIONS
+
+    o (2.23.1) Fixed ERROR message to better indicate vignette troubleshooting
+    document and fixed reference in Troubleshooting vignette. These ERRORs are
+    triggered by both AnnotationHub and ExperimentHub so clarified the
+    Troubleshooting document is in AnnotationHub. 
+
+CHANGES IN VERSION 2.21.0
+-------------------------
+BUG FIX
+
+    o (2.21.5) Fix documentation for setting AnnotationHubOptions
+    o (2.21.3) Fix printing of proxy when present
+    
+USER-VISIBLE MODIFICATIONS
+
+    o (2.21.6) Make internet connection test less stringent
+    o (2.21.4) Add link to github for reporting issues
+    o (2.21.2) Update to reference hubs@bioconductor.org for help 
+    o (2.21.1) Update .tidyGRanges to account for incorrect or missing genomes
+
+
+CHANGES IN VERSION 2.19.0
+-------------------------
+
+BUG FIX
+
+    o (2.19.12) change has_internet to nslookup to avoid locations that do not
+    have access to google dns.
+
+NEW FEATURES
+
+    o (2.19.8) Fixed messages to be more informative
+    o (2.19.8) trycatch around bfcneedsupdate/bfcdownload for sqlite database to
+    prevent error when internet is spotty and databse source cannot be checked
+    for a newer version.
+    o (2.19.4) trycatch around bfcneedsupdate call will prevent error when
+    internet is spotty and resource cannot be checked for a newer version.
+    o (2.19.3) New function removeResources for removing locally downloaded
+    cached resources. Nicer interface than using cache. Improved documentation
+    on use of setting a cache to NULL to also remove resources.
+    o (2.19.2) Adds option ask to constructor. Default: True. Ask will ask user
+    to create default AnnotationHub location and if in an non interactive
+    session utilize a temporary directory. If False, the default directory is
+    created and utilized without prompting.
+
+USER-VISIBLE MODIFICATIONS
+
+    o (2.19.1) Improve ERROR message when resource isn't found. Also involved
+    updating RecordStatus function. If resource hasn't been completely removed
+    from database, gives when the resource was removed. If the resource is
+    available but after the snapshot date being utilized, specialized message.
+
+CHANGES IN VERSION 2.17.0
+-------------------------
+
+NEW FEATURES
+
+    o (2.17.6) remove debugging message of loading resource (`AH: 1`)
+    o (2.17.5) system environment variable to control localHub option for
+    creating hub based only on previously downloaded resources
+    o (2.17.9) Allow force redownload of Hub sqlite file with refreshHub
+    o (2.17.12) Only display download message when something to download.
+    o (2.17.13) The output list of files is the AH/EH id not AHid:resourceid
+
+BUG FIXES
+
+    o (2.17.4) Fix localHub when no internet connection.  The internal use of
+    isDevel was preventing Hub creation when no internet connection. Fixed by
+    checking connection. This code pretained to orgDb filters
+    o (2.17.8) On chance of very first download of hub failure, next call to
+    construtor will redownload
+    o (2.17.10) Fix ability to use hubs when offline
+    o (2.17.11) Add BiocVersion to Imports. Fixes bug with R CMD check when
+    testing if library can be loaded off search path. BiocManager doesn't Import
+    BiocVersions and this is needed to get the correct BiocManager version of
+    the snapshot date.
+
+CHANGES IN VERSION 2.15.0
+-------------------------
+
+SIGNIFICANT USER-VISIBLE CHANGES
+
+    o (2.15.9) The Hubs have been updated to use BiocFileCache as a backend
+    utility for managing and downloading resources. This allows for file
+    specific caching mechanism. This change is a significant user change as it
+    changed the default directories for the Hubs (AnnotationHub/ExperimentHub)
+    as well as the base directory no longer being hidden.
+
+NEW FEATURES
+
+    o (2.15.15) Added BamFile Resource method
+    o (2.15.9) Add helper function to get additional information on
+    resources. getInfoOnIds
+    o (2.15.2) Add function to list currently available DispatchClass
+
+USER-VISIBLE MODIFICATIONS
+
+    o (2.15.3)  Bioconductor will no longer accept random, Individual resources
+    without an accompanied package.
+    o (2.15.4)  We also encourage the use of AnnotationHub rather than very
+    large annotation packages. We added sections for users wishing to convert
+    existing packages to use AnnotationHub as well.
+    o (2.15.7) There were substantial updates to Rsamtools. Rsamtools no longer
+    supports razip files. These files have been removed from the hub and
+    vignette updated to use the twobit and gff files
+
+BUG FIXES
+    o (2.15.5) Fixed bug. If resources are removed from the hub, this should
+    only be reflected in the devel branch but still be available in release
+    branch. The filter for exposed resources was refined to respect
+    datadateremoved
+
+
+CHANGES IN VERSION 2.12.0
+-------------------------
+
+MODIFICATIONS
+
+    o Updated code from BiocInstaller to BiocManager
+
+CHANGES IN VERSION 2.12.0
+-------------------------
+
+BUG FIXES
+
+    o Prompt for permission when downloading many (more than
+    AnnotationHubOption("MAX_DOWNLOADS")) resources.
+
+MODIFICATIONS
+
+    o Moved readMetadataFromCsv back to AnnotationHubData.
+
+    o Use AnnotationHubData::makeAnnotationHubMetadata to validate metadata.csv
+
+CHANGES IN VERSION 2.10.0
+------------------------
+
+NEW FEATURES
+
+    o AnnotationHub will now work offline utilizing argument 'localHub'; will
+    also use this option automatically if no internet connection is detected.
+
+    o Added new GDSResource class
+
+    o Added documentation for creating an AnnotationHub package
+
+MODIFICATIONS
+
+    o Modified tags vector when passed to display to improve speed of display
+    querying
+
+    o Moved readMetadataFromCsv from AnnotationHubData.
+
+    o Removed listResources and loadResource from AnnotationHub; not implemented
+    and only valid in ExperimentHub
+
+BUG FIXES
+
+    o Expose snapshot less than or equal to release date
+
+    o Force rebuild of index if index file corrput or out of date
+
+CHANGES IN VERSION 2.8.0
+------------------------
+
+NEW FEATURES
+
+    o add .get1,RDSResource-method
+
+    o add RdsResource class
+
+    o add EnsDb dispatch class
+
+    o expose rdatapath in metadata
+
+MODIFICATIONS
+
+    o modify records exposed as metadata
+      - expose records added <= snapshot date
+      - expose a single OrgDb per organism per BioC version
+
+    o edits to .get1,GenomicScores-method and .get1,GenomicScoresResource-method
+
+    o work on biocVersion and snapshotDate relationship:
+      - snapshotDate() must be <= biocVersion() release date
+      - possibleDates() are now filtered by snapshotDate()
+
+    o remove GenomicScoresResource; Robert Castelo will handle loading these
+    resources in his GenomicScores software package
+
+    o Changed show method for hub object
+      - removed sourcelastmodifieddate
+      - added rdatadateadded
+
+
+BUG FIXES
+
+    o fix bug in ordering of output from .uid0()
+
+    o fix bugs in 'snapshotDate<-' method
+
+CHANGES IN VERSION 2.6.0
+------------------------
+
+NEW FEATURES
+
+    o add vignette section on sharing resources on clusters
+
+    o add 'preparerclass' to index.rda to allow search by package name for
+      ExperimentHub objects
+
+    o add GenomicScoresResource class for Robert Castelo
+
+MODIFICATIONS
+
+    o return 'tags' metadata as list instead of comma-separated character
+      vector
+
+    o move AnnotationHubRecipes vignette to AnnotationHubData
+
+    o move listResources() and loadResources() from ExperimentHub
+
+    o expose additional fields in .DB_RESOURCE_FIELDS()
+
+    o modify cache path to avoid creating a '~' directory on Mac
+
+    o use https: NCBI rul in documentation
+
+    o modify .get1,EpiExpressionTextResource-method to use 'gene_id'
+      column as row names
+
+
+CHANGES IN VERSION 2.4.0
+------------------------
+
+NEW FEATURES
+
+    o add new status codes '4' and '5' to 'statuses' mysql table;
+      change 'status_id' field to '4' for all removed records to date
+
+    o add getRecordStatus() generic
+
+    o add package() generic
+
+    o create 'Hub' VIRTUAL class
+      - add new .Hub() base constructor for all hubs
+      - add getAnnotationHubOption() and setAnnotationHubOption()
+      - promote cache() to generic
+      - add getHub() getter for AnnotationHubResource class
+      - add getUrl(), getCache(), getDate() getters
+      - export as few db helpers as possible
+
+    o add 'EpigenomeRoadmapNarrowAllPeaks' and
+      'EpigenomeRoadmapNarrowFDR' classes
+
+MODIFICATIONS
+
+    o distinguish between broad and narrow peak files in
+      EpigenomeRoadmapFileResource dispatch class
+
+    o don't use cache for AnnotationHub SQLite connection
+      - originally introduced so could be closed if needed, but
+	creates complexity
+      - instead, open / close connection around individual queries (not a
+	performance concern)
+      - expose hub, cache, proxy in AnnotationHub constructor
+      - document dbconn,Hub-method, dbfile,Hub-method, .db_close
+
+    o snapshotDate now uses timestamp (last date any row was modified) instead
+      of rdatadateadded
+
+    o .require fails rather than emits warning
+      - unit test on .require()
+      - also, cache(hub[FALSE]) does not create spurious error
+
+    o work on removed records and biocVersion
+      - .uid0() was reorganized and no longer groups by record_id
+      - metadata is returned for records with
+	biocversion field <= current biocVersion
+	instead of an exact match with the current version
+      - metadata is not returned for removed records
+
+BUG FIXES
+
+    o Work around httr() progress() bug by disabling progress bar
+
+
+CHANGES IN VERSION 2.2.0
+------------------------
+
+SIGNIFICANT USER-VISIBLE CHANGES
+
+    o seqinfo(GRanges) for all genomes supported by GenomeInfoDb now
+      contain seqlengths.
+
+
+CHANGES IN VERSION 2.1.21
+--------------------------
+
+SIGNIFICANT USER-VISIBLE CHANGES
+
+    o fileName() returns the cache path on the disk for a file that
+      has been cached and NA for files which have not been cached.
+
+    o The error message (when file is not downloaded from the hub)
+      displays the AnnotationHub name, title, and reason for failure.
+
+
+CHANGES IN VERSION 2.1
+----------------------
+
+NEW FEATURES
+
+    o as.list() splits AnnotationHub instances into a list of
+    instances, each with a single record. c() concatenates hubs.
+
+BUG FIXES
+
+    o cache<- now behaves as documented, e.g., removing the cached
+    version of the file.
+
+CHANGES IN VERSION 2.0.0
+------------------------
+
+NEW FEATURES
+
+    o AnnotationHub is all new.  We basically rewrote the entire thing.
+
+    o The back end is new (new database, new way of tracking/routing
+    data etc.)
+
+    o The front end is new (new AnnotationHub object, new methods, new
+    behaviors, new ways of finding and downloading data)
+
+    o The metadata has also been cleaned up and made more
+    consistent/searchable
+
+    o The recipes that are used to populate these data have also been
+    cleaned up.
+
+    o There is also a new vignette to explain how to use the new
+    AnnotationHub in detail
+
+IMPROVEMENTS SINCE LAST TIME
+
+    o The old way of finding data (an enormous tree of paths), was not
+    really scalable to the amount of data we have to provide access
+    to.  So we junked it.  Now you have a number of better methods to
+    allow you to search for terms instead.
+
+    o The new hub interface can be searched using a new display
+    method, but it can *also* be searched entirely from the command
+    line.  This allows you to use it in examples and scripts in a way
+    that is friendlier for reproducible research.
+
+    o For users who want to contribute valuable new annotation
+    resources to the AnnotationHub, it is now possible to write a
+    recipe and test that it works for yourself.  Then once you are
+    happy with it, you can contact us and we can add data to the
+    AnnotationHub.

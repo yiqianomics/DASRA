@@ -1,0 +1,7 @@
+class:ExperimentHub     ExperimentHub objects and their related methods
+                        and functions
+getExperimentHubOption
+                        Get and set options for default ExperimentHub
+                        behavior.
+utilities               Utility functions for discovering
+                        package-specific Hub resources.

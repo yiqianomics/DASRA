@@ -10,12 +10,16 @@ The correction is designed for analyses in which a strict majority of eligible t
 
 ## Installation
 
-From the package source directory:
+Install the dependencies and then install DASRA from the package source
+directory:
 
 ```r
 install.packages(c("Rcpp", "nleqslv", "statmod"))
-remotes::install_github("yiqianomics/DASRA")
+devtools::install()
 ```
+
+The released GitHub version can be installed with
+`remotes::install_github("yiqianomics/DASRA")`.
 
 ## Input
 
@@ -90,3 +94,9 @@ For the comparison-minus-reference contrast:
 - `p_omnibus_cauchy` is an equal-weight Cauchy sensitivity combination.
 
 Taxa with fewer than three positive counts are not retained. A requested component that cannot be formed for a retained taxon enters its multiplicity family with p-value one, and the reason is recorded in `fit$diagnostics`.
+
+When a retained taxon has no observed zeros, DASRA reports a conservative
+structural-absence p-value of one; the regular score statistic is undefined.
+The primary Bonferroni omnibus retains this conservative component, whereas
+the Cauchy sensitivity omnibus combines only regular component tests. The
+corresponding component-use columns in `fit$results` record these choices.

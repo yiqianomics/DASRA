@@ -102,12 +102,25 @@ void validate_inputs(const Rcpp::NumericVector& y,
     for (R_xlen_t i = 0; i < n; ++i) {
         const double yi = y[i];
         const double Ni = N[i];
-        if (!R_FINITE(yi) || !R_FINITE(Ni) || yi < 0.0 || Ni < 0.0 ||
-            yi > Ni || !integerish(yi) || !integerish(Ni)) {
+        const double etai = eta[i];
+        if (!R_FINITE(yi) || !R_FINITE(Ni) || !R_FINITE(etai) ||
+            yi < 0.0 || Ni < 0.0 || yi > Ni ||
+            !integerish(yi) || !integerish(Ni)) {
             Rcpp::stop(
-                "y and N must be finite integer counts satisfying 0 <= y <= N."
+                "y and N must be finite integer counts satisfying "
+                "0 <= y <= N, and eta must be finite."
             );
         }
+    }
+}
+
+void validate_solver_controls(const int iterations,
+                              const double score_tolerance,
+                              const double bracket_tolerance) {
+    if (iterations < 1 || !R_FINITE(score_tolerance) ||
+        !R_FINITE(bracket_tolerance) || score_tolerance <= 0.0 ||
+        bracket_tolerance <= 0.0) {
+        Rcpp::stop("Invalid latent-mode solver controls.");
     }
 }
 
@@ -209,6 +222,9 @@ Rcpp::NumericVector dasra_count_log_hy_adaptive_cpp(
         const double score_tolerance = 1e-12,
         const double bracket_tolerance = 1e-12) {
     validate_inputs(y, N, eta, sigma);
+    validate_solver_controls(
+        iterations, score_tolerance, bracket_tolerance
+    );
     const R_xlen_t n = y.size();
     const R_xlen_t Q = node.size();
     if (Q < 1 || log_raw_weight.size() != Q) {
@@ -285,6 +301,9 @@ Rcpp::List dasra_count_moments_adaptive_cpp(
         const double score_tolerance = 1e-12,
         const double bracket_tolerance = 1e-12) {
     validate_inputs(y, N, eta, sigma);
+    validate_solver_controls(
+        iterations, score_tolerance, bracket_tolerance
+    );
     const R_xlen_t n = y.size();
     const R_xlen_t Q = node.size();
     if (Q < 1 || log_raw_weight.size() != Q) {

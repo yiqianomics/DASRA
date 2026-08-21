@@ -1,0 +1,2 @@
+"dataset","dataset_label","template_path","template_md5","n_samples","group_size","n_taxa","completed_units","replicates_with_any_checkpoint","completed_replicates","depth_sdlog","minimum_depth","maximum_depth","generated_at","DASRA_version","ZINQ_version","maaslin3_version"
+"MetaCardis_2020_a","MetaCardis_2020_a","/Users/yiqianzhang/Desktop/DASRA/Analysis/NegativeControlAnalysis/data/public_templates/MetaCardis_2020_a_genus_template.rds","29b493f5cb032274cba19f8ebaf69949",200,100,30,3,1,1,0.45,300,30000,"2026-08-21 17:18:54 EDT","0.3.1","2.0","1.5.3"

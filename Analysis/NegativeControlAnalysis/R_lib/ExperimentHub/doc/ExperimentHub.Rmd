@@ -1,0 +1,343 @@
+---
+title: "ExperimentHub: Access the ExperimentHub Web Service"
+output:
+  BiocStyle::html_document:
+    toc: true
+vignette: >
+  % \VignetteIndexEntry{ExperimentHub: Access the ExperimentHub Web Service}
+  % \VignetteDepends{ExperimentHub}
+  % \VignetteEngine{knitr::rmarkdown}
+  % \VignetteEncoding{UTF-8}
+---
+
+```{r style, echo = FALSE, results = 'asis'}
+BiocStyle::markdown()
+```
+
+The `ExperimentHub` server provides easy _R / Bioconductor_ access to
+large files of data.
+
+# ExperimentHub objects
+
+The `r Biocpkg("ExperimentHub")` package provides a client interface
+to resources stored at the ExperimentHub web service. It has similar
+functionality to `r Biocpkg("AnnotationHub")` package.
+
+```{r library, message=FALSE}
+library(ExperimentHub)
+```
+
+The `r Biocpkg("ExperimentHub")` package is straightforward to use.
+Create an `ExperimentHub` object
+
+```{r ExperimentHub}
+eh = ExperimentHub()
+```
+
+Now at this point you have already done everything you need in order
+to start retrieving experiment data.  For most operations, using the
+`ExperimentHub` object should feel a lot like working with a familiar
+`list` or `data.frame` and has all of the functionality of an `Hub`
+object like  `r Biocpkg("AnnotationHub")` package's `AnnotationHub`
+object.
+
+Lets take a minute to look at the show method for the hub object eh
+
+```{r show}
+eh
+```
+
+You can see that it gives you an idea about the different types of data that are present inside the hub. You can see where the data is coming from (dataprovider), as well as what species have samples present (species), what kinds of R data objects could be returned (rdataclass). We can take a closer look at all the kinds of data providers that are available by simply looking at the contents of dataprovider as if it were the column of a data.frame object like this:
+
+```{r dataprovider}
+head(unique(eh$dataprovider))
+```
+
+In the same way, you can also see data from different species inside the hub by looking at the contents of species like this:
+
+```{r species}
+head(unique(eh$species))
+```
+
+And this will also work for any of the other types of metadata present.  You can learn which kinds of metadata are available by simply hitting the tab key after you type 'eh$'.  In this way you can explore for yourself what kinds of data are present in the hub right from the command line. This interface also allows you to access the hub programmatically to extract data that matches a particular set of criteria.
+
+Another valuable types of metadata to pay attention to is the rdataclass.
+
+```{r rdataclass}
+head(unique(eh$rdataclass))
+```
+
+The rdataclass allows you to see which kinds of R objects the hub will return to you.  This kind of information is valuable both as a means to filter results and also as a means to explore and learn about some of the kinds of `ExperimentHub` objects that are widely available for the project.  Right now this is a pretty short list, but over time it should grow as we support more of the different kinds of `ExperimentHub` objects via the hub.
+
+Now let's try getting the data files associated with the `r
+Biocpkg("alpineData")` package using the query method. The query method lets you
+search rows for specific strings, returning an `ExperimentHub` instance with
+just the rows matching the query. The `ExperimentHub::package()` function
+indicates the package responsible for original preparation and documentation of
+the ExperimentHub data, and is a useful resource to find out more about the
+data. This package may also depend, import or suggest other packages required
+for manipulating the data, and for this reason the package may need to be
+installed and loaded to use the resource. The package is also available in the
+(cryptically named) `preparerclass` column of the metadata of the ExperimentHub
+object.
+
+One can get chain files for Drosophila melanogaster from UCSC with:
+
+```{r alpine}
+apData <- query(eh, "alpineData")
+apData
+```
+Query has worked and you can now see that the only data present is provided by
+the `r Biocpkg("alpineData")` package.
+
+The metadata underlying this hub object can be retrieved by you
+
+```{r show2}
+apData$preparerclass
+df <- mcols(apData)
+```
+
+By default the show method will only display the first 5 and last 5  rows.
+There are hundreds of records present in the hub.
+
+```{r length}
+length(eh)
+```
+
+Let's look at another example, where we pull down only data
+from the hub for species "mus musculus".
+
+```{r subset}
+mm <- query(eh, "mus musculus")
+mm
+```
+
+## Interactive retrieval of resources with BiocHubsShiny
+
+We can perform the same query using the `BiocHubsShiny()` function from the
+eponymous package. In the 'species' field we can enter `musculus` as the
+search term.
+
+```{r BiocHubsShiny, eval=FALSE}
+BiocHubsShiny::BiocHubsShiny()
+```
+
+```{r,echo=FALSE,fig.cap="BiocHubsShiny query with species term 'musculus'",out.width="100%"}
+knitr::include_graphics("../man/figures/mm10_BiocHubsShiny.png")
+```
+
+# Using `ExperimentHub` to retrieve data
+
+Looking back at our alpineData file example, if we are interested in the first file, we can get its metadata using
+
+```{r dm2}
+apData
+apData["EH166"]
+```
+
+We can download the file using
+
+```{r dm3}
+apData[["EH166"]]
+```
+
+Each file is retrieved from the ExperimentHub server and the file is
+also cached locally, so that the next time you need to retrieve it,
+it should download much more quickly.
+
+# Configuring `ExperimentHub` objects
+
+When you create the `ExperimentHub` object, it will set up the object
+for you with some default settings.  See `?ExperimentHub` for ways to
+customize the hub source, the local cache, and other instance-specific
+options, and `?getExperimentHubOption` to get or set package-global
+options for use across sessions.
+
+If you look at the object you will see some helpful information about
+it such as where the data is cached and where online the hub server is
+set to.
+
+```{r show-2}
+eh
+```
+
+By default the `ExperimentHub` object is set to the latest
+`snapshotData` and a snapshot version that matches the version of
+_Bioconductor_ that you are using. You can also learn about these data
+with the appropriate methods.
+
+```{r snapshot}
+snapshotDate(eh)
+```
+
+If you are interested in using an older version of a snapshot, you can
+list previous versions with the `possibleDates()` like this:
+
+```{r possibleDates}
+pd <- possibleDates(eh)
+pd
+```
+
+Set the dates like this:
+
+```{r setdate, eval=FALSE}
+snapshotDate(ah) <- pd[1]
+```
+
+
+
+# Creating an ExperimentHub Package or Converting to an ExperimentHub Package
+
+Please see `r Biocpkg("HubPub")` Vignette "CreateAHubPackage".
+```
+vignette("CreateAHubPackage", package="HubPub")
+```
+
+# Troubleshooting
+
+Please see `r Biocpkg("AnnotationHub")` vignette "TroubleshootingTheHubs".
+```
+vignette("TroubleshootingTheHubs", package="AnnotationHub")
+```
+
+# Accessing Behind A Proxy
+
+The ExperimentHub uses CRAN package `httr` functions `HEAD` and `GET` for accessing
+web resources. This can be problematic if operating behind a proxy. The easiest
+solution is to set the `httr::set_config` with the proxy information.
+
+```
+proxy <- httr::use_proxy("http://my_user:my_password@myproxy:8080")
+## or
+proxy <- httr::use_proxy(Sys.getenv('http_proxy'))
+httr::set_config(proxy)
+ExperimentHub::setExperimentHubOption("PROXY", proxy)
+```
+
+
+# Group Hub/Cache Access
+
+The situation may occur where a hub is desired to be shared across multiple
+users on a system.  This presents permissions errors.  To allow access to
+multiple users create a group that the users belong to and that the underlying
+hub cache belongs too. Permissions of potentially two files need to be altered depending
+on what you would like individuals to be able to accomplish with the hub. A
+read-only hub will require manual manipulatios of the file
+BiocFileCache.sqlite.LOCK so that the group permissions are `g+rw`. To allow
+users to download files to the shared hub, both the
+BiocFileCache.sqlite.LOCK file and the BiocFileCache.sqlite file will need group
+permissions to `g+rw`. Please google how to create a user group for your system
+of interest. To find the location of the hub cache to be able to change the group
+and file permissions, you may run the following in R `eh = ExperimentHub();
+hubCache(eh)`. For quick reference in linux you will use `chown
+currentuser:newgroup` to change the group and `chmod` to change the file
+permissions: `chmod 660` or `chmod g+rw` should accomplish the correct
+permissions.
+
+
+
+# Default Caching Location Update
+
+
+As of ExperimentHub version > 1.17.2, the default caching location has
+changed. The default cache is now controlled by the function `tools::R_user_dir`
+instead of `rappdirs::user_cache_dir`.  Users who have utilized the default
+ExperimentHub location, to continue using the created cache, must move the cache and its
+files to the new default location,  create a system environment variable to
+point to the old location, or delete and start a new cache.
+
+## Option 1: Move cache and files to new location
+
+The following steps can be used to move the files to the new location:
+
+1. Determine the old location by running the following in R
+   `rappdirs::user_cache_dir(appname="ExperimentHub")`
+
+2. Determine the new location by running the following in R
+   `tools::R_user_dir("ExperimentHub", which="cache")`
+
+3. Move the files to the new location. You can do this manually or do the
+following steps in R. Remember if you have a lot of cached files, this may take
+awhile.
+
+```{r, eval=FALSE}
+
+       # make sure you have permissions on the cache/files
+       # use at own risk
+
+
+       moveFiles<-function(package){
+	   olddir <- path.expand(rappdirs::user_cache_dir(appname=package))
+	   newdir <- tools::R_user_dir(package, which="cache")
+	   dir.create(path=newdir, recursive=TRUE)
+	   files <- list.files(olddir, full.names =TRUE)
+	   moveres <- vapply(files,
+	       FUN=function(fl){
+		   filename = basename(fl)
+		   newname = file.path(newdir, filename)
+		   file.rename(fl, newname)
+	       },
+	       FUN.VALUE = logical(1))
+	   if(all(moveres)) unlink(olddir, recursive=TRUE)
+       }
+
+
+       package="ExperimentHub"
+       moveFiles(package)
+
+```
+
+## Option 2:  Create a system environment variable
+
+A user may set the system environment variable `EXPERIMENT_HUB_CACHE` to control
+the default location of the cache. Setting system environment variables can vary
+depending on the operating system; we suggest using google to find appropriate
+instructions per your operating system.
+
+You will want to set the variable to the results of running the following in R:
+
+```{r, eval=FALSE}
+path.expand(rappdirs::user_cache_dir(appname="ExperimentHub"))
+```
+
+**NOTE:** R has `Sys.setenv` however that will only set the variable for that R
+  session. It would not be available or recognized in future R sessions. It is
+  important to set the variable as a global user-wide or system-wide
+  environment variable so it persists in all future logins to your system.
+
+## Option 3: Delete the old cache
+
+Lastly, if a user does not care about the already existing default cache, the
+old location may be deleted to move forward with the new default location. This
+option should be used with caution. Once deleted, old cached resources will no
+longer be available and have to be re-downloaded.
+
+One can do this manually by navigating to the location indicated in the ERROR
+message as `Problematic cache:` and deleting the folder and all its content.
+
+
+The following can be done to delete through R code:
+
+**CAUTION** This will remove the old cache and all downloaded resources. All
+  resources will have to be re-downloaded after executing this code.
+
+```{r, eval=FALSE}
+library(ExperimentHub)
+oldcache = path.expand(rappdirs::user_cache_dir(appname="ExperimentHub"))
+setExperimentHubOption("CACHE", oldcache)
+eh = ExperimentHub(localHub=TRUE)
+
+## removes old location and all resources
+removeCache(eh, ask=FALSE)
+
+## create the new default caching location
+newcache = tools::R_user_dir("ExperimentHub", which="cache")
+setExperimentHubOption("CACHE", newcache)
+eh = ExperimentHub()
+```
+
+# Session info
+
+```{r sessionInfo}
+sessionInfo()
+```

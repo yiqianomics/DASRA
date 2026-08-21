@@ -1,0 +1,60 @@
+Package: AnnotationHub
+Type: Package
+Title: Client to access AnnotationHub resources
+Version: 3.16.1
+Authors@R: 
+    c(person("Bioconductor Package", "Maintainer", email="maintainer@bioconductor.org",
+             role="cre"),
+      person("Martin", "Morgan", role="aut"),
+      person("Marc", "Carlson", role="ctb"),
+      person("Dan", "Tenenbaum", role="ctb"),
+      person("Sonali", "Arora", role="ctb"),
+      person("Valerie", "Oberchain", role="ctb"),
+      person("Kayla", "Morrell", role="ctb"),
+      person("Lori", "Shepherd", role="aut"))
+biocViews: Infrastructure, DataImport, GUI, ThirdPartyClient
+Description: This package provides a client for the Bioconductor
+    AnnotationHub web resource. The AnnotationHub web resource
+    provides a central location where genomic files (e.g., VCF, bed,
+    wig) and other resources from standard locations (e.g., UCSC,
+    Ensembl) can be discovered. The resource includes metadata about
+    each resource, e.g., a textual description, tags, and date of
+    modification. The client creates and manages a local cache of
+    files retrieved by the user, helping with quick and reproducible
+    access.
+License: Artistic-2.0
+Depends: BiocGenerics (>= 0.15.10), BiocFileCache (>= 1.5.1)
+Imports: utils, methods, grDevices, RSQLite, BiocManager, BiocVersion,
+        curl, rappdirs, AnnotationDbi (>= 1.31.19), S4Vectors, httr,
+        yaml, dplyr
+Suggests: IRanges, GenomicRanges, GenomeInfoDb, VariantAnnotation,
+        Rsamtools, rtracklayer, BiocStyle, knitr, AnnotationForge,
+        rBiopaxParser, RUnit, txdbmaker, MSnbase, mzR, Biostrings,
+        CompoundDb, keras, ensembldb, SummarizedExperiment,
+        ExperimentHub, gdsfmt, rmarkdown, HubPub
+Enhances: AnnotationHubData
+Collate: AnnotationHubOption.R AllGenerics.R Hub-class.R db-utils.R
+        AnnotationHub-class.R AnnotationHubResource-class.R
+        BEDResource-class.R ProteomicsResource-class.R
+        EpigenomeResource-class.R EnsDbResource-class.R utilities.R
+        sql-utils.R Hub-utils.R cache-utils.R zzz.R
+VignetteBuilder: knitr
+BugReports: https://github.com/Bioconductor/AnnotationHub/issues
+NeedsCompilation: yes
+git_url: https://git.bioconductor.org/packages/AnnotationHub
+git_branch: RELEASE_3_21
+git_last_commit: cda9c0e
+git_last_commit_date: 2025-07-17
+Repository: Bioconductor 3.21
+Date/Publication: 2025-07-21
+Packaged: 2025-07-21 22:59:57 UTC; biocbuild
+Author: Bioconductor Package Maintainer [cre],
+  Martin Morgan [aut],
+  Marc Carlson [ctb],
+  Dan Tenenbaum [ctb],
+  Sonali Arora [ctb],
+  Valerie Oberchain [ctb],
+  Kayla Morrell [ctb],
+  Lori Shepherd [aut]
+Maintainer: Bioconductor Package Maintainer <maintainer@bioconductor.org>
+Built: R 4.5.1; ; 2025-07-23 18:59:46 UTC; unix

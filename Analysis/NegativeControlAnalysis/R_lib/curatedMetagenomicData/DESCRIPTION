@@ -1,0 +1,68 @@
+Package: curatedMetagenomicData
+Title: Curated Metagenomic Data of the Human Microbiome
+Description: 
+    The curatedMetagenomicData package provides standardized, curated human
+    microbiome data for novel analyses. It includes gene families, marker
+    abundance, marker presence, pathway abundance, pathway coverage, and
+    relative abundance for samples collected from different body sites. The
+    bacterial, fungal, and archaeal taxonomic abundances for each sample were
+    calculated with MetaPhlAn3, and metabolic functional potential was
+    calculated with HUMAnN3. The manually curated sample metadata and
+    standardized metagenomic data are available as (Tree)SummarizedExperiment
+    objects.
+Authors@R: 
+    c(person(given = "Lucas", family = "schiffer", role = c("aut", "cre"),
+             email = "schiffer.lucas@gmail.com",
+             comment = c(ORCID = "0000-0003-3628-0326")),
+      person(given = "Levi", family = "Waldron", role = "aut"),
+      person(given = "Edoardo", family = "Pasolli", role = "ctb"),
+      person(given = "Jennifer", family = "Wokaty", role = "ctb"),
+      person(given = "Sean", family = "Davis", role = "ctb"),
+      person(given = "Audrey", family = "Renson", role = "ctb"),
+      person(given = "Chloe", family = "Mirzayi", role = "ctb"),
+      person(given = "Paolo", family = "Manghi", role = "ctb"),
+      person(given = "Samuel", family = "Gamboa-Tuz", role = "ctb"),
+      person(given = "Marcel", family = "Ramos", role = "ctb"),
+      person(given = "Valerie", family = "Obenchain", role = "ctb"),
+      person(given = "Kelly", family = "Eckenrode", role = "ctb"),
+      person(given = "Nicola", family = "Segata", role = "ctb"))
+biocViews: ExperimentHub, Homo_sapiens_Data, MicrobiomeData,
+        ReproducibleResearch
+Version: 3.16.1
+License: Artistic-2.0
+Depends: R (>= 4.1.0), SummarizedExperiment, TreeSummarizedExperiment
+Imports: AnnotationHub, ExperimentHub, S4Vectors, dplyr, magrittr, mia,
+        purrr, rlang, stringr, tibble, tidyr, tidyselect
+Suggests: BiocStyle, DT, knitr, readr, rmarkdown, scater, testthat,
+        utils, uwot, vegan
+URL: https://github.com/waldronlab/curatedMetagenomicData
+BugReports: https://github.com/waldronlab/curatedMetagenomicData/issues
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+VignetteBuilder: knitr
+git_url: https://git.bioconductor.org/packages/curatedMetagenomicData
+git_branch: RELEASE_3_21
+git_last_commit: 5e19c62
+git_last_commit_date: 2025-04-18
+Repository: Bioconductor 3.21
+Date/Publication: 2025-04-22
+NeedsCompilation: no
+Packaged: 2025-04-22 15:14:47 UTC; biocbuild
+Author: Lucas schiffer [aut, cre] (ORCID:
+    <https://orcid.org/0000-0003-3628-0326>),
+  Levi Waldron [aut],
+  Edoardo Pasolli [ctb],
+  Jennifer Wokaty [ctb],
+  Sean Davis [ctb],
+  Audrey Renson [ctb],
+  Chloe Mirzayi [ctb],
+  Paolo Manghi [ctb],
+  Samuel Gamboa-Tuz [ctb],
+  Marcel Ramos [ctb],
+  Valerie Obenchain [ctb],
+  Kelly Eckenrode [ctb],
+  Nicola Segata [ctb]
+Maintainer: Lucas schiffer <schiffer.lucas@gmail.com>
+Built: R 4.5.0; ; 2026-08-21 20:58:41 UTC; unix

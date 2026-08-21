@@ -1,0 +1,4 @@
+"dataset","dataset_label","replicate","scenario","n_H","n_Case","median_depth_H","median_depth_Case","depth_ratio_Case_to_H","minimum_depth","maximum_depth","group_seed","count_seed","elapsed_seconds"
+"MetaCardis_2020_a","MetaCardis_2020_a",1,"balanced",100,100,4039.5,4229,1.04691174650328,1494,10587,1901110,2001210,19.503
+"MetaCardis_2020_a","MetaCardis_2020_a",1,"fourfold",100,100,1527.5,6075.5,3.97741407528642,396,17316,1901110,2101213,20.887
+"MetaCardis_2020_a","MetaCardis_2020_a",1,"sixfold",100,100,952.5,6114,6.41889763779528,334,20946,1901110,2201216,18.643

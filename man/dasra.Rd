@@ -14,7 +14,8 @@ dasra(
   reference = NULL,
   p_adjust_method = "BH",
   component = c("all", "structural_absence", "relative_abundance"),
-  full_output = FALSE
+  full_output = FALSE,
+  conditional_present_starts = 1L
 )
 }
 \arguments{
@@ -50,13 +51,19 @@ component. \code{"relative_abundance"} fits the relative-abundance component.}
 
 \item{full_output}{Logical. If \code{TRUE}, the returned object includes detailed
 fits for the requested components.}
+
+\item{conditional_present_starts}{Number of deterministic starts for the
+structural-absence conditional-present count fit. The default \code{1L} begins
+with the prespecified primary start and uses the full five-start bank when
+the primary fit does not satisfy the formation checks. Setting \code{5L} uses
+the full bank immediately. Only \code{1L} and \code{5L} are supported.}
 }
 \value{
 An object of class \code{dasra} with elements:
 \describe{
 \item{results}{A taxon-level table for the requested analyses.}
 \item{diagnostics}{Taxon retention, support counts, component-formation
-status, and machine-readable formation reasons.}
+status, documented formation reasons, and numerical warnings.}
 \item{settings}{The fitted contrast and analysis settings.}
 \item{call}{The matched function call.}
 \item{fits}{Detailed component fits when \code{full_output = TRUE}.}
@@ -93,6 +100,17 @@ Taxa with positive counts in fewer than three samples are excluded before
 component fitting and omitted from the multiple-testing families. Every
 retained taxon remains in each requested family; an unavailable component is
 assigned a conservative p-value of one.
+
+If a retained taxon has no observed zeros, the observed absence indicator
+has no variation. DASRA reports a conservative degenerate structural result
+with p-value one; the regular score statistic is undefined.
+The primary omnibus retains every formed component, including this
+conservative structural result. The Cauchy sensitivity omnibus combines
+only regular component tests. The returned component-use columns record the
+components entering each omnibus calculation.
+Numerical warnings identify fitted roots that passed the stated residual,
+rank, stability, and backward-error checks but remain weakly identified or
+sensitive to the numerical path.
 }
 \examples{
 \donttest{

@@ -5,3 +5,12 @@ src/*.o
 src/*.so
 src/*.dll
 src/*.dylib
+
+# Local real-data preparation inputs and outputs
+Analysis/RealDataAnalysis/*/raw/
+Analysis/RealDataAnalysis/*/processed/
+Analysis/RealDataAnalysis/*/prepare_data.R
+
+# Local method workspaces and compatibility libraries
+Analysis/RealDataAnalysis/*/work/
+Analysis/RealDataAnalysis/R_lib/
