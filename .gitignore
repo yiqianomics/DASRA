@@ -14,3 +14,6 @@ Analysis/RealDataAnalysis/*/prepare_data.R
 # Local method workspaces and compatibility libraries
 Analysis/RealDataAnalysis/*/work/
 Analysis/RealDataAnalysis/R_lib/
+
+# Local negative-control analysis
+Analysis/NegativeControlAnalysis/

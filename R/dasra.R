@@ -2970,6 +2970,52 @@ zt_target_score <- function(alpha, beta, y, N, g, X_rho, X_eta, gh) {
     zt_target_score_from_components(alpha, y, g, X_rho, comp)
 }
 
+zt_intercept_alpha_boundary <- function(log_r, y) {
+    log_r <- as.numeric(log_r)
+    y <- as.numeric(y)
+    if (length(log_r) != length(y) || any(!is.finite(log_r)) ||
+        any(log_r > 0) || any(!is.finite(y))) {
+        stop("Invalid intercept-alpha boundary inputs.")
+    }
+    zero <- y == 0
+    n_positive <- sum(!zero)
+    n_zero <- sum(zero)
+    if (n_positive < 1L || n_zero < 1L) {
+        stop("The intercept-alpha boundary requires zeros and positives.")
+    }
+
+    log_odds <- log_r[zero] - zt_log1mexp(log_r[zero])
+    largest <- max(log_odds)
+    log_zero_odds_sum <- if (is.infinite(largest) && largest > 0) {
+        Inf
+    } else {
+        largest + log(sum(exp(log_odds - largest)))
+    }
+    if (is.infinite(log_zero_odds_sum)) {
+        zero_odds_sum <- Inf
+        relative_C0 <- 1
+    } else {
+        zero_odds_sum <- exp(log_zero_odds_sum)
+        reference <- max(log_zero_odds_sum, log(n_positive))
+        relative_C0 <- (
+            exp(log_zero_odds_sum - reference) -
+                exp(log(n_positive) - reference)
+        ) / (
+            exp(log_zero_odds_sum - reference) +
+                exp(log(n_positive) - reference)
+        )
+    }
+    C0 <- zero_odds_sum - n_positive
+    list(
+        at_zero = isTRUE(relative_C0 <= 0),
+        C0 = C0,
+        relative_C0 = relative_C0,
+        zero_odds_sum = zero_odds_sum,
+        n_positive = n_positive,
+        n_zero = n_zero
+    )
+}
+
 zt_fit_alpha <- function(beta, y, N, X_rho, X_eta, gh, maxit = 500L,
                          conditional_present = NULL) {
     p_alpha <- ncol(X_rho)
@@ -3843,6 +3889,52 @@ zt_count_structural_test <- function(y, N, g, z = NULL, Q = 1001L,
     detection_component <- zt_beta_detection_components(
         beta, N, X_eta, gh
     )
+    intercept_only <- ncol(X_rho) == 1L &&
+        all(abs(X_rho[, 1L] - 1) <= 16 * .Machine$double.eps)
+    alpha_boundary <- if (!is.null(detection_component) && intercept_only) {
+        zt_intercept_alpha_boundary(detection_component$log_r, y)
+    } else {
+        NULL
+    }
+    if (isTRUE(alpha_boundary$at_zero)) {
+        diagnostics <- c(base_diag, list(
+            U = 0,
+            V = 0,
+            statistic = NA_real_,
+            score_z = NA_real_,
+            degenerate_null = TRUE,
+            boundary_parameter = "rho",
+            boundary_value = 0,
+            exact_boundary = TRUE,
+            intercept_alpha_C0 = alpha_boundary$C0,
+            intercept_alpha_relative_C0 = alpha_boundary$relative_C0,
+            intercept_alpha_zero_odds_sum = alpha_boundary$zero_odds_sum,
+            numerical_warnings = unique(beta_fit$numerical_warnings)
+        ))
+        if (keep_fit) {
+            diagnostics$fit <- list(
+                conditional_present = beta_fit,
+                structural_absence = list(
+                    method = "exact_C0_boundary",
+                    reason = "structural_absence_boundary_at_zero",
+                    par = -Inf,
+                    exact_boundary = alpha_boundary
+                ),
+                X_rho = X_rho,
+                X_eta = X_eta,
+                quadrature = gh
+            )
+        }
+        return(list(
+            p = 1,
+            tested = TRUE,
+            regular = FALSE,
+            reason = "structural_absence_boundary_at_zero",
+            gamma = rep(0, n),
+            rho = rep(0, n),
+            diagnostics = diagnostics
+        ))
+    }
     alpha_fit <- if (is.null(detection_component)) {
         list(ok = FALSE, reason = "structural_absence_no_finite_fit")
     } else {
