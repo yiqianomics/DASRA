@@ -1,7 +1,7 @@
 Package: DASRA
 Type: Package
 Title: Depth-Aware Structural-Absence and Relative-Abundance Analysis
-Version: 0.3.1
+Version: 0.3.2
 Authors@R:
     c(
         person("Yiqian", "Zhang", email = "zhang.16383@osu.edu",
